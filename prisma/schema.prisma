@@ -1,0 +1,102 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+enum UserRole {
+  PROFESSOR
+  COORDENADOR
+}
+
+enum StatusProva {
+  PENDENTE
+  CONCLUIDA
+  CANCELADA
+}
+
+enum Bimestre {
+  PRIMEIRO
+  SEGUNDO
+  TERCEIRO
+  QUARTO
+}
+
+model Escola {
+  id   String @id @default(uuid()) @db.Uuid
+  nome String @unique @db.VarChar(255)
+
+  users  User[]
+  turmas Turma[]
+
+  @@map("escolas")
+}
+
+model User {
+  id              String   @id @default(uuid()) @db.Uuid
+  name            String   @db.VarChar(255)
+  email           String   @unique
+  cpf             String   @unique @db.VarChar(11) // Apenas os números
+  data_nascimento DateTime @db.Date
+  sexo            String   @db.VarChar(20) // Pode ser um Enum também
+
+  password String   @db.VarChar(255)
+  role     UserRole @default(PROFESSOR)
+
+  escolaId String @db.Uuid
+  escola   Escola @relation(fields: [escolaId], references: [id])
+
+  turmas Turma[]
+  // Um usuário (que seja professor) pode ter várias provas
+  provas Prova[]
+
+  create_at  DateTime @default(now()) @map("created_at")
+  updated_at DateTime @updatedAt @map("updated_at")
+
+  @@map("users")
+}
+
+model Prova {
+  id        String      @id @default(uuid()) @db.Uuid
+  titulo    String      @db.VarChar(255) // Exemplo de campo útil
+  descricao String      @db.VarChar(500)
+  status    StatusProva @default(PENDENTE)
+  bimestre  Bimestre
+  anoLetivo String      @db.VarChar(9)
+
+  arquivo_url String @db.VarChar(500)
+
+  // Relação com o Professor (que na verdade é um User)
+  professorId String @db.Uuid
+  professor   User   @relation(fields: [professorId], references: [id])
+
+  turmaId String @db.Uuid
+  turma   Turma  @relation(fields: [turmaId], references: [id])
+
+  create_at  DateTime @default(now()) @map("created_at")
+  updated_at DateTime @updatedAt @map("updated_at")
+
+  @@map("provas")
+}
+
+model Turma {
+  id   String @id @default(uuid()) @db.Uuid
+  nome String @unique @db.VarChar(255) // Ex: "3º Ano A", "4º Ano B"
+
+  // Relação com a Escola (Um-para-Muitos corrigida)
+  escolaId String @db.Uuid
+  escola   Escola @relation(fields: [escolaId], references: [id])
+
+  // Relação Many-to-Many: Uma turma tem VÁRIOS professores(users)
+  professores User[]
+
+  provas     Prova[]
+  create_at  DateTime @default(now()) @map("created_at")
+  updated_at DateTime @updatedAt @map("updated_at")
+
+  @@map("turmas")
+}

@@ -1,0 +1,14 @@
+services:
+  postgres:
+    container_name: provas-api
+    image: bitnami/postgresql:latest
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: provasapi
+    volumes:
+      - provas-api-data:/bitnami/postgresql
+volumes:
+  provas-api-data:
