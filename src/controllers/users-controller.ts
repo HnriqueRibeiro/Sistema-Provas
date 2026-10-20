@@ -150,13 +150,22 @@ class UsersController {
 
   async update(req: Request, res: Response) {
     const paramsSchema = z.object({ id: z.string().uuid() });
+
+    // Adicionamos CPF, Data de Nascimento e Sexo aqui!
     const bodySchema = z.object({
       name: z.string().trim().min(3).optional(),
       email: z.string().email().optional(),
+      cpf: z
+        .string()
+        .trim()
+        .transform((val) => val.replace(/\D/g, ""))
+        .optional(),
+      data_nascimento: z.coerce.date().optional(),
+      sexo: z.enum(["MASCULINO", "FEMININO"]).optional(),
     });
 
     const { id } = paramsSchema.parse(req.params);
-    const { name, email } = bodySchema.parse(req.body);
+    const data = bodySchema.parse(req.body);
     const { escolaId } = req.user;
 
     const professor = await prisma.user.findFirst({
@@ -166,8 +175,15 @@ class UsersController {
 
     const updatedProfessor = await prisma.user.update({
       where: { id },
-      data: { name, email },
-      select: { id: true, name: true, email: true },
+      data, // Passa todos os dados que vieram do frontend
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        cpf: true,
+        sexo: true,
+        data_nascimento: true,
+      },
     });
 
     return res.json(updatedProfessor);

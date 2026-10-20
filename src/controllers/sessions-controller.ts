@@ -14,6 +14,7 @@ class SessionsController {
         .string()
         .min(6, { message: "Senha deve ter no mínimo 6 caracteres" }),
     });
+
     const { email, password } = bodySchema.parse(req.body);
 
     const user = await prisma.user.findFirst({ where: { email } });
@@ -30,7 +31,6 @@ class SessionsController {
 
     const { secret, expiresIn } = authConfig.jwt;
 
-    // Mudamos aqui para jwt.sign
     const token = jwt.sign(
       {
         role: user.role,
@@ -43,9 +43,16 @@ class SessionsController {
       } as SignOptions,
     );
 
-    const { password: _, ...userWithoutPassword } = user;
+    // CORREÇÃO DE SEGURANÇA: Filtramos os dados sensíveis antes de enviar
+    const userSeguro = {
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      role: user.role,
+      escolaId: user.escolaId,
+    };
 
-    res.json({ token, user: userWithoutPassword });
+    res.json({ token, user: userSeguro });
   }
 }
 export { SessionsController };

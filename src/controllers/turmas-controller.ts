@@ -56,17 +56,29 @@ class TurmasController {
   async show(req: Request, res: Response) {
     const paramsSchema = z.object({ id: z.string().uuid() });
     const { id } = paramsSchema.parse(req.params);
-    const { escolaId } = req.user;
+
+    // Agora extraímos a role e o userId de quem está logado
+    const { escolaId, role, id: userId } = req.user;
 
     const turma = await prisma.turma.findFirst({
-      where: { id, escolaId },
+      where: {
+        id,
+        escolaId,
+        // TRAVA DE SEGURANÇA: Se for professor, o banco só acha a turma se ele estiver nela!
+        ...(role === "PROFESSOR"
+          ? { professores: { some: { id: userId } } }
+          : {}),
+      },
       include: {
-        professores: { select: { id: true, name: true, email: true } }, // Mostra quem dá aula lá
+        professores: { select: { id: true, name: true, email: true } },
       },
     });
 
     if (!turma) {
-      throw new AppError("Turma não encontrada.", 404);
+      throw new AppError(
+        "Turma não encontrada ou você não tem permissão de acessá-la.",
+        404,
+      );
     }
 
     res.json(turma);
