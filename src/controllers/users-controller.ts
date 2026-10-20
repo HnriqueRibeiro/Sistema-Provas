@@ -126,6 +126,77 @@ class UsersController {
 
     return res.json(professoresSeguros);
   }
+
+  async show(req: Request, res: Response) {
+    const paramsSchema = z.object({ id: z.string().uuid() });
+    const { id } = paramsSchema.parse(req.params);
+    const { escolaId } = req.user;
+
+    const professor = await prisma.user.findFirst({
+      where: { id, escolaId, role: "PROFESSOR" },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        cpf: true,
+        data_nascimento: true,
+        sexo: true,
+      },
+    });
+
+    if (!professor) throw new AppError("Professor não encontrado.", 404);
+    return res.json(professor);
+  }
+
+  async update(req: Request, res: Response) {
+    const paramsSchema = z.object({ id: z.string().uuid() });
+    const bodySchema = z.object({
+      name: z.string().trim().min(3).optional(),
+      email: z.string().email().optional(),
+    });
+
+    const { id } = paramsSchema.parse(req.params);
+    const { name, email } = bodySchema.parse(req.body);
+    const { escolaId } = req.user;
+
+    const professor = await prisma.user.findFirst({
+      where: { id, escolaId, role: "PROFESSOR" },
+    });
+    if (!professor) throw new AppError("Professor não encontrado.", 404);
+
+    const updatedProfessor = await prisma.user.update({
+      where: { id },
+      data: { name, email },
+      select: { id: true, name: true, email: true },
+    });
+
+    return res.json(updatedProfessor);
+  }
+
+  async delete(req: Request, res: Response) {
+    const paramsSchema = z.object({ id: z.string().uuid() });
+    const { id } = paramsSchema.parse(req.params);
+    const { escolaId } = req.user;
+
+    const professor = await prisma.user.findFirst({
+      where: { id, escolaId, role: "PROFESSOR" },
+    });
+    if (!professor) throw new AppError("Professor não encontrado.", 404);
+
+    // Regra de Ouro: Não podemos apagar um professor que já tem provas no sistema!
+    const provasDoProfessor = await prisma.prova.count({
+      where: { professorId: id },
+    });
+    if (provasDoProfessor > 0) {
+      throw new AppError(
+        "Este professor não pode ser excluído pois já possui provas enviadas no sistema.",
+        400,
+      );
+    }
+
+    await prisma.user.delete({ where: { id } });
+    return res.status(204).send();
+  }
 }
 
 export { UsersController };

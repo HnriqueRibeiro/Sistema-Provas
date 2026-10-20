@@ -17,4 +17,24 @@ usersRoutes.get(
   usersController.index,
 );
 
+// NOVAS ROTAS (Para os 3 ícones do frontend)
+usersRoutes.get(
+  "/:id",
+  ensureAuthenticated,
+  verifyUserAuthorization(["COORDENADOR"]),
+  usersController.show,
+);
+usersRoutes.put(
+  "/:id",
+  ensureAuthenticated,
+  verifyUserAuthorization(["COORDENADOR"]),
+  usersController.update,
+);
+usersRoutes.delete(
+  "/:id",
+  ensureAuthenticated,
+  verifyUserAuthorization(["COORDENADOR"]),
+  usersController.delete,
+);
+
 export { usersRoutes };
