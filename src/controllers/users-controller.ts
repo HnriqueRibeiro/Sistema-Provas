@@ -4,22 +4,45 @@ import { hash } from "bcrypt";
 import { prisma } from "../database/prisma.js";
 import { AppError } from "../utils/AppError.js";
 
+function cpfValido(value: string) {
+  const cpf = value.replace(/\D/g, "");
+
+  if (cpf.length !== 11 || /^(\d)\1{10}$/.test(cpf)) {
+    return false;
+  }
+
+  const calcularDigito = (quantidade: number) => {
+    let soma = 0;
+
+    for (let i = 0; i < quantidade; i += 1) {
+      soma += Number(cpf[i]) * (quantidade + 1 - i);
+    }
+
+    const resto = (soma * 10) % 11;
+    return resto === 10 ? 0 : resto;
+  };
+
+  return (
+    calcularDigito(9) === Number(cpf[9]) &&
+    calcularDigito(10) === Number(cpf[10])
+  );
+}
+
 class UsersController {
   async create(req: Request, res: Response, next: NextFunction) {
     const bodySchema = z.object({
       name: z.string().trim().min(3, { message: "Name is required" }),
       email: z.string().email({ message: "Invalid email format" }),
 
-      // Transform limpa os pontos do CPF caso o frontend mande com máscara
       cpf: z
         .string()
         .trim()
-        .transform((val) => val.replace(/\D/g, "")),
+        .transform((val) => val.replace(/\D/g, ""))
+        .refine((val) => cpfValido(val), { message: "CPF inválido" }),
 
       data_nascimento: z.coerce.date({ message: "Invalid date format" }),
       sexo: z.enum(["MASCULINO", "FEMININO"]),
 
-      // Deixamos opcionais para a coordenadora não precisar preencher no futuro
       escolaId: z.string().uuid().optional(),
       role: z.enum(["PROFESSOR", "COORDENADOR"]).optional(),
       password: z.string().min(6).optional(),
@@ -36,7 +59,6 @@ class UsersController {
       password: passwordDoBody,
     } = bodySchema.parse(req.body);
 
-    // LÓGICA INTELIGENTE: Pega o ID que você mandou no Insomnia OU pega do Token de quem está logado
     const escolaIdFinal = escolaIdDoBody || (req as any).user?.escolaId;
 
     if (!escolaIdFinal) {
@@ -52,11 +74,8 @@ class UsersController {
       throw new AppError("E-mail já cadastrado", 400);
     }
 
-    // LÓGICA INTELIGENTE: Se você mandar senha, usa ela. Se a coordenadora não mandar, usa o CPF como padrão.
     const senhaFinal = passwordDoBody ? passwordDoBody : cpf;
     const hashedPassword = await hash(senhaFinal, 8);
-
-    // LÓGICA INTELIGENTE: Se você mandar o role, ele obedece. Se não mandar, vira professor.
     const roleFinal = roleDoBody || "PROFESSOR";
 
     const user = await prisma.user.create({
@@ -68,7 +87,7 @@ class UsersController {
         sexo,
         password: hashedPassword,
         escolaId: escolaIdFinal,
-        role: roleFinal, // Agora sim o seu Coordenador nasce como Coordenador!
+        role: roleFinal,
       },
     });
 
@@ -80,21 +99,32 @@ class UsersController {
   async index(req: Request, res: Response) {
     const { escolaId } = req.user;
 
-    // Busca apenas os professores que pertencem à escola do coordenador logado
     const professores = await prisma.user.findMany({
       where: {
         escolaId,
         role: "PROFESSOR",
       },
-      // Seleciona apenas dados seguros (não traz a senha)
       select: {
         id: true,
         name: true,
         email: true,
+        cpf: true,
+        sexo: true,
+      },
+      orderBy: {
+        name: "asc",
       },
     });
 
-    return res.json(professores);
+    const professoresSeguros = professores.map((professor) => ({
+      id: professor.id,
+      name: professor.name,
+      email: professor.email,
+      cpf: `***.***.***-${professor.cpf.slice(-2)}`,
+      sexo: professor.sexo,
+    }));
+
+    return res.json(professoresSeguros);
   }
 }
 
