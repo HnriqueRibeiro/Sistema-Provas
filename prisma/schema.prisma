@@ -68,7 +68,8 @@ model Prova {
   bimestre  Bimestre
   anoLetivo String      @db.VarChar(9)
 
-  arquivo_url String @db.VarChar(500)
+  motivo_cancelamento String? @db.VarChar(500)
+  arquivo_url         String  @db.VarChar(500)
 
   // Relação com o Professor (que na verdade é um User)
   professorId String @db.Uuid

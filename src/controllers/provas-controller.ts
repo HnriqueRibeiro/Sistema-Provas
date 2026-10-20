@@ -102,6 +102,43 @@ class ProvasController {
     res.json(prova);
   }
 
+  async updateStatus(req: Request, res: Response) {
+    const paramsSchema = z.object({ id: z.string().uuid() });
+    const bodySchema = z.object({
+      status: z.enum(["PENDENTE", "CONCLUIDA", "CANCELADA"]),
+      motivoCancelamento: z.string().optional().nullable(),
+    });
+
+    const { id } = paramsSchema.parse(req.params);
+    const { status, motivoCancelamento } = bodySchema.parse(req.body);
+    const { role, escolaId } = req.user;
+
+    // Trava de segurança: Somente Coordenadores podem avaliar provas
+    if (role !== "COORDENADOR") {
+      throw new AppError("Apenas coordenadores podem avaliar provas.", 403);
+    }
+
+    // Verifica se a prova existe e pertence a uma turma da mesma escola
+    const prova = await prisma.prova.findFirst({
+      where: { id, turma: { escolaId } },
+    });
+
+    if (!prova) {
+      throw new AppError("Prova não encontrada.", 404);
+    }
+
+    // Atualiza a prova no banco
+    const provaAtualizada = await prisma.prova.update({
+      where: { id },
+      data: {
+        status,
+        motivo_cancelamento: status === "CANCELADA" ? motivoCancelamento : null, // Só salva o motivo se for cancelada
+      },
+    });
+
+    res.json(provaAtualizada);
+  }
+
   async delete(req: Request, res: Response) {
     const paramsSchema = z.object({ id: z.string().uuid() });
     const { id } = paramsSchema.parse(req.params);

@@ -31,6 +31,13 @@ provasRoutes.post(
   provasController.create,
 );
 
+// NOVA ROTA: Atualizar o Status (Apenas Coordenador)
+provasRoutes.patch(
+  "/:id/status",
+  verifyUserAuthorization(["COORDENADOR"]),
+  provasController.updateStatus,
+);
+
 // Professor e Coordenador podem deletar (Coordenador deleta qualquer uma, Professor só as dele)
 provasRoutes.delete(
   "/:id",
