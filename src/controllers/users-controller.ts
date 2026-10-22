@@ -1,13 +1,9 @@
 import { Request, Response } from "express";
 import { z } from "zod";
-import { authConfig } from "../configs/auth.js";
 import { prisma } from "../database/prisma.js";
 import {
-  assertPasswordPolicy,
-  generateTemporaryPassword,
   hashPassword,
   normalizeEmail,
-  verifyPassword,
 } from "../services/password-service.js";
 import { AppError } from "../utils/AppError.js";
 import { isValidCpf, normalizeCpf } from "../utils/cpf.js";
@@ -48,10 +44,6 @@ const professorUpdateSchema = z
     message: "Informe ao menos um campo para atualização.",
   });
 
-function addHours(date: Date, hours: number) {
-  return new Date(date.getTime() + hours * 60 * 60 * 1000);
-}
-
 class UsersController {
   async create(req: Request, res: Response) {
     const { name, email, cpf, data_nascimento, sexo } = professorBodySchema.parse(
@@ -74,12 +66,9 @@ class UsersController {
       throw new AppError("CPF já cadastrado.", 400);
     }
 
-    const temporaryPassword = generateTemporaryPassword();
-    const passwordHash = await hashPassword(temporaryPassword);
-    const temporaryPasswordExpiresAt = addHours(
-      new Date(),
-      authConfig.temporaryPasswordExpiresInHours,
-    );
+    // Sistema fechado: o CPF somente com números é a senha inicial.
+    // O valor nunca é salvo em texto puro; apenas o hash bcrypt vai para o banco.
+    const passwordHash = await hashPassword(cpf);
 
     const user = await prisma.user.create({
       data: {
@@ -91,8 +80,6 @@ class UsersController {
         password: passwordHash,
         role: "PROFESSOR",
         escolaId,
-        mustChangePassword: true,
-        temporaryPasswordExpiresAt,
       },
       select: {
         id: true,
@@ -102,11 +89,7 @@ class UsersController {
       },
     });
 
-    return res.status(201).json({
-      user,
-      temporaryPassword,
-      temporaryPasswordExpiresAt,
-    });
+    return res.status(201).json(user);
   }
 
   async index(req: Request, res: Response) {
@@ -233,125 +216,6 @@ class UsersController {
 
     await prisma.user.delete({ where: { id } });
     return res.status(204).send();
-  }
-
-  async resetAccess(req: Request, res: Response) {
-    const paramsSchema = z.object({ id: z.string().uuid() });
-    const { id } = paramsSchema.parse(req.params);
-
-    const targetUser = await prisma.user.findUnique({
-      where: { id },
-      select: {
-        id: true,
-        role: true,
-        escolaId: true,
-      },
-    });
-
-    if (!targetUser) {
-      throw new AppError("Usuário não encontrado.", 404);
-    }
-
-    if (targetUser.role !== "PROFESSOR") {
-      throw new AppError(
-        "Coordenadores não podem redefinir o acesso de outro coordenador.",
-        403,
-      );
-    }
-
-    if (targetUser.escolaId !== req.user.escolaId) {
-      throw new AppError(
-        "Você não possui permissão para administrar este professor.",
-        403,
-      );
-    }
-
-    const temporaryPassword = generateTemporaryPassword();
-    const passwordHash = await hashPassword(temporaryPassword);
-    const expiresAt = addHours(
-      new Date(),
-      authConfig.temporaryPasswordExpiresInHours,
-    );
-    const now = new Date();
-
-    await prisma.$transaction([
-      prisma.user.update({
-        where: { id: targetUser.id },
-        data: {
-          password: passwordHash,
-          mustChangePassword: true,
-          temporaryPasswordExpiresAt: expiresAt,
-          tokenVersion: { increment: 1 },
-        },
-      }),
-      prisma.passwordResetToken.updateMany({
-        where: { userId: targetUser.id, usedAt: null },
-        data: { usedAt: now },
-      }),
-    ]);
-
-    console.info("ADMIN_ACCESS_RESET");
-
-    return res.json({
-      temporaryPassword,
-      expiresAt,
-    });
-  }
-
-  async changePassword(req: Request, res: Response) {
-    const bodySchema = z.object({
-      currentPassword: z.string().min(1).max(72),
-      newPassword: z.string().min(1).max(72),
-    });
-
-    const { currentPassword, newPassword } = bodySchema.parse(req.body);
-    const user = await prisma.user.findUnique({ where: { id: req.user.id } });
-
-    if (!user) {
-      throw new AppError("Usuário não encontrado.", 404);
-    }
-
-    const currentPasswordMatches = await verifyPassword(
-      currentPassword,
-      user.password,
-    );
-
-    if (!currentPasswordMatches) {
-      throw new AppError("Senha atual inválida.", 401);
-    }
-
-    await assertPasswordPolicy(newPassword, {
-      cpf: user.cpf,
-      email: user.email,
-      currentPasswordHash: user.password,
-    });
-
-    const passwordHash = await hashPassword(newPassword);
-    const now = new Date();
-
-    await prisma.$transaction([
-      prisma.user.update({
-        where: { id: user.id },
-        data: {
-          password: passwordHash,
-          mustChangePassword: false,
-          temporaryPasswordExpiresAt: null,
-          passwordChangedAt: now,
-          tokenVersion: { increment: 1 },
-        },
-      }),
-      prisma.passwordResetToken.updateMany({
-        where: { userId: user.id, usedAt: null },
-        data: { usedAt: now },
-      }),
-    ]);
-
-    console.info("PASSWORD_CHANGED");
-
-    return res.json({
-      message: "Senha alterada com sucesso. Entre novamente com a nova senha.",
-      requiresLogin: true,
-    });
   }
 }
 
