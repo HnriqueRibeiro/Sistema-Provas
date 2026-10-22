@@ -40,19 +40,24 @@ model User {
   id              String   @id @default(uuid()) @db.Uuid
   name            String   @db.VarChar(255)
   email           String   @unique
-  cpf             String   @unique @db.VarChar(11) // Apenas os números
+  cpf             String   @unique @db.VarChar(11)
   data_nascimento DateTime @db.Date
-  sexo            String   @db.VarChar(20) // Pode ser um Enum também
+  sexo            String   @db.VarChar(20)
 
   password String   @db.VarChar(255)
   role     UserRole @default(PROFESSOR)
 
+  mustChangePassword          Boolean   @default(false) @map("must_change_password")
+  temporaryPasswordExpiresAt  DateTime? @map("temporary_password_expires_at") @db.Timestamptz(3)
+  tokenVersion                Int       @default(0) @map("token_version")
+  passwordChangedAt           DateTime? @map("password_changed_at") @db.Timestamptz(3)
+
   escolaId String @db.Uuid
   escola   Escola @relation(fields: [escolaId], references: [id])
 
-  turmas Turma[]
-  // Um usuário (que seja professor) pode ter várias provas
-  provas Prova[]
+  turmas              Turma[]
+  provas               Prova[]
+  passwordResetTokens  PasswordResetToken[]
 
   create_at  DateTime @default(now()) @map("created_at")
   updated_at DateTime @updatedAt @map("updated_at")
@@ -60,9 +65,24 @@ model User {
   @@map("users")
 }
 
+model PasswordResetToken {
+  id        String    @id @default(uuid()) @db.Uuid
+  userId    String    @map("user_id") @db.Uuid
+  tokenHash String    @unique @map("token_hash") @db.VarChar(64)
+  expiresAt DateTime  @map("expires_at") @db.Timestamptz(3)
+  usedAt    DateTime? @map("used_at") @db.Timestamptz(3)
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, usedAt])
+  @@index([expiresAt])
+  @@map("password_reset_tokens")
+}
+
 model Prova {
   id        String      @id @default(uuid()) @db.Uuid
-  titulo    String      @db.VarChar(255) // Exemplo de campo útil
+  titulo    String      @db.VarChar(255)
   descricao String      @db.VarChar(500)
   status    StatusProva @default(PENDENTE)
   bimestre  Bimestre
@@ -71,7 +91,6 @@ model Prova {
   motivo_cancelamento String? @db.VarChar(500)
   arquivo_url         String  @db.VarChar(500)
 
-  // Relação com o Professor (que na verdade é um User)
   professorId String @db.Uuid
   professor   User   @relation(fields: [professorId], references: [id])
 
@@ -86,16 +105,14 @@ model Prova {
 
 model Turma {
   id   String @id @default(uuid()) @db.Uuid
-  nome String @unique @db.VarChar(255) // Ex: "3º Ano A", "4º Ano B"
+  nome String @unique @db.VarChar(255)
 
-  // Relação com a Escola (Um-para-Muitos corrigida)
   escolaId String @db.Uuid
   escola   Escola @relation(fields: [escolaId], references: [id])
 
-  // Relação Many-to-Many: Uma turma tem VÁRIOS professores(users)
   professores User[]
+  provas      Prova[]
 
-  provas     Prova[]
   create_at  DateTime @default(now()) @map("created_at")
   updated_at DateTime @updatedAt @map("updated_at")
 
