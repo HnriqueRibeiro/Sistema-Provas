@@ -47,17 +47,15 @@ model User {
   password String   @db.VarChar(255)
   role     UserRole @default(PROFESSOR)
 
-  mustChangePassword          Boolean   @default(false) @map("must_change_password")
-  temporaryPasswordExpiresAt  DateTime? @map("temporary_password_expires_at") @db.Timestamptz(3)
-  tokenVersion                Int       @default(0) @map("token_version")
-  passwordChangedAt           DateTime? @map("password_changed_at") @db.Timestamptz(3)
+  tokenVersion      Int       @default(0) @map("token_version")
+  passwordChangedAt DateTime? @map("password_changed_at") @db.Timestamptz(3)
 
   escolaId String @db.Uuid
   escola   Escola @relation(fields: [escolaId], references: [id])
 
-  turmas              Turma[]
-  provas               Prova[]
-  passwordResetTokens  PasswordResetToken[]
+  turmas             Turma[]
+  provas              Prova[]
+  passwordResetTokens PasswordResetToken[]
 
   create_at  DateTime @default(now()) @map("created_at")
   updated_at DateTime @updatedAt @map("updated_at")
