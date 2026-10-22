@@ -101,6 +101,7 @@ Depois de atualizar o código local e configurar o `.env`:
 npm install
 npx prisma migrate dev
 npx prisma generate
+npm test
 npm run typecheck
 npm run build
 npm run dev
