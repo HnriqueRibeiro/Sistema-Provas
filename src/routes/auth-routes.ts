@@ -33,14 +33,6 @@ const resetPasswordRateLimit = createRateLimit({
     `${req.ip || "unknown"}:${fingerprintRateLimitValue(String(req.body?.token ?? ""))}`,
 });
 
-const firstAccessRateLimit = createRateLimit({
-  namespace: "first-access",
-  windowMs: fifteenMinutes,
-  max: 8,
-  keyGenerator: (req) =>
-    `${req.ip || "unknown"}:${fingerprintRateLimitValue(String(req.body?.token ?? ""))}`,
-});
-
 authRoutes.post(
   "/forgot-password",
   forgotPasswordByIp,
@@ -52,12 +44,6 @@ authRoutes.post(
   "/reset-password",
   resetPasswordRateLimit,
   authController.resetPassword,
-);
-
-authRoutes.post(
-  "/first-access/change-password",
-  firstAccessRateLimit,
-  authController.firstAccessChangePassword,
 );
 
 export { authRoutes };
