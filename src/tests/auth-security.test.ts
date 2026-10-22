@@ -3,16 +3,19 @@ import test from "node:test";
 
 process.env.DATABASE_URL ??= "postgresql://user:password@localhost:5432/test";
 process.env.JWT_SECRET ??= "test-jwt-secret";
-process.env.PASSWORD_CHANGE_TOKEN_SECRET ??=
-  "test-password-change-secret-with-at-least-32-characters";
 process.env.BCRYPT_SALT_ROUNDS ??= "10";
 
 const { isValidCpf, normalizeCpf } = await import("../utils/cpf.js");
 const {
   assertPasswordPolicy,
-  generateTemporaryPassword,
   hashPassword,
+  verifyPassword,
 } = await import("../services/password-service.js");
+const {
+  clearLoginFailures,
+  getLoginAttemptState,
+  registerLoginFailure,
+} = await import("../services/login-attempt-service.js");
 
 test("normaliza e valida CPF matematicamente", () => {
   assert.equal(normalizeCpf("529.982.247-25"), "52998224725");
@@ -21,16 +24,16 @@ test("normaliza e valida CPF matematicamente", () => {
   assert.equal(isValidCpf("529.982.247-24"), false);
 });
 
-test("gera credenciais temporarias aleatorias com tamanho adequado", () => {
-  const first = generateTemporaryPassword();
-  const second = generateTemporaryPassword();
+test("bcrypt armazena o CPF inicial apenas como hash", async () => {
+  const cpf = "52998224725";
+  const passwordHash = await hashPassword(cpf);
 
-  assert.ok(first.length >= 12 && first.length <= 16);
-  assert.ok(second.length >= 12 && second.length <= 16);
-  assert.notEqual(first, second);
+  assert.notEqual(passwordHash, cpf);
+  assert.equal(passwordHash.includes(cpf), false);
+  assert.equal(await verifyPassword(cpf, passwordHash), true);
 });
 
-test("politica recusa senha curta, CPF, e-mail e senha atual", async () => {
+test("politica de redefinicao recusa senha curta, CPF, e-mail e senha atual", async () => {
   await assert.rejects(
     () => assertPasswordPolicy("curta"),
     /mínimo de 10 caracteres/,
@@ -58,7 +61,7 @@ test("politica recusa senha curta, CPF, e-mail e senha atual", async () => {
       assertPasswordPolicy("SenhaAtualSegura123", {
         currentPasswordHash,
       }),
-    /diferente da senha atual ou temporária/,
+    /diferente da senha atual/,
   );
 });
 
@@ -69,4 +72,29 @@ test("politica aceita senha longa que nao coincide com dados do usuario", async 
       email: "professor@escola.com",
     }),
   );
+});
+
+test("bloqueia login temporariamente na terceira credencial incorreta", () => {
+  const email = "tentativas-teste@escola.com";
+  const ip = "127.0.0.123";
+  clearLoginFailures(email, ip);
+
+  const primeira = registerLoginFailure(email, ip);
+  assert.equal(primeira.blocked, false);
+  assert.equal(primeira.attemptsRemaining, 2);
+
+  const segunda = registerLoginFailure(email, ip);
+  assert.equal(segunda.blocked, false);
+  assert.equal(segunda.attemptsRemaining, 1);
+
+  const terceira = registerLoginFailure(email, ip);
+  assert.equal(terceira.blocked, true);
+  assert.equal(terceira.attemptsRemaining, 0);
+  assert.ok((terceira.retryAfterSeconds ?? 0) > 0);
+
+  const bloqueado = getLoginAttemptState(email, ip);
+  assert.equal(bloqueado.blocked, true);
+
+  clearLoginFailures(email, ip);
+  assert.equal(getLoginAttemptState(email, ip).blocked, false);
 });
