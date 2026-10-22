@@ -1,4 +1,3 @@
-import { randomBytes } from "node:crypto";
 import { compare, hash } from "bcrypt";
 import { env } from "../env.js";
 import { AppError } from "../utils/AppError.js";
@@ -12,10 +11,6 @@ interface PasswordPolicyContext {
 
 export function normalizeEmail(value: string) {
   return value.trim().toLowerCase();
-}
-
-export function generateTemporaryPassword() {
-  return randomBytes(12).toString("base64url");
 }
 
 export async function hashPassword(password: string) {
@@ -55,9 +50,6 @@ export async function assertPasswordPolicy(
     context.currentPasswordHash &&
     (await verifyPassword(password, context.currentPasswordHash))
   ) {
-    throw new AppError(
-      "A nova senha deve ser diferente da senha atual ou temporária.",
-      400,
-    );
+    throw new AppError("A nova senha deve ser diferente da senha atual.", 400);
   }
 }
