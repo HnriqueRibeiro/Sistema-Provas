@@ -1,82 +1,85 @@
-import { Request, Response, NextFunction } from "express";
+import { Request, Response } from "express";
 import { z } from "zod";
-import { hash } from "bcrypt";
+import { authConfig } from "../configs/auth.js";
 import { prisma } from "../database/prisma.js";
+import {
+  assertPasswordPolicy,
+  generateTemporaryPassword,
+  hashPassword,
+  normalizeEmail,
+  verifyPassword,
+} from "../services/password-service.js";
 import { AppError } from "../utils/AppError.js";
+import { isValidCpf, normalizeCpf } from "../utils/cpf.js";
 
-function cpfValido(value: string) {
-  const cpf = value.replace(/\D/g, "");
+const professorBodySchema = z.object({
+  name: z.string().trim().min(3, { message: "Informe o nome completo" }),
+  email: z
+    .string()
+    .trim()
+    .email({ message: "E-mail inválido" })
+    .transform((value) => normalizeEmail(value)),
+  cpf: z
+    .string()
+    .transform((value) => normalizeCpf(value))
+    .refine((value) => isValidCpf(value), { message: "CPF inválido" }),
+  data_nascimento: z.coerce.date({ message: "Data de nascimento inválida" }),
+  sexo: z.enum(["MASCULINO", "FEMININO"]),
+});
 
-  if (cpf.length !== 11 || /^(\d)\1{10}$/.test(cpf)) {
-    return false;
-  }
+const professorUpdateSchema = z
+  .object({
+    name: z.string().trim().min(3, { message: "Informe o nome completo" }).optional(),
+    email: z
+      .string()
+      .trim()
+      .email({ message: "E-mail inválido" })
+      .transform((value) => normalizeEmail(value))
+      .optional(),
+    cpf: z
+      .string()
+      .transform((value) => normalizeCpf(value))
+      .refine((value) => isValidCpf(value), { message: "CPF inválido" })
+      .optional(),
+    data_nascimento: z.coerce.date({ message: "Data de nascimento inválida" }).optional(),
+    sexo: z.enum(["MASCULINO", "FEMININO"]).optional(),
+  })
+  .refine((data) => Object.keys(data).length > 0, {
+    message: "Informe ao menos um campo para atualização.",
+  });
 
-  const calcularDigito = (quantidade: number) => {
-    let soma = 0;
-
-    for (let i = 0; i < quantidade; i += 1) {
-      soma += Number(cpf[i]) * (quantidade + 1 - i);
-    }
-
-    const resto = (soma * 10) % 11;
-    return resto === 10 ? 0 : resto;
-  };
-
-  return (
-    calcularDigito(9) === Number(cpf[9]) &&
-    calcularDigito(10) === Number(cpf[10])
-  );
+function addHours(date: Date, hours: number) {
+  return new Date(date.getTime() + hours * 60 * 60 * 1000);
 }
 
 class UsersController {
-  async create(req: Request, res: Response, next: NextFunction) {
-    const bodySchema = z.object({
-      name: z.string().trim().min(3, { message: "Name is required" }),
-      email: z.string().email({ message: "Invalid email format" }),
+  async create(req: Request, res: Response) {
+    const { name, email, cpf, data_nascimento, sexo } = professorBodySchema.parse(
+      req.body,
+    );
+    const { escolaId } = req.user;
 
-      cpf: z
-        .string()
-        .trim()
-        .transform((val) => val.replace(/\D/g, ""))
-        .refine((val) => cpfValido(val), { message: "CPF inválido" }),
-
-      data_nascimento: z.coerce.date({ message: "Invalid date format" }),
-      sexo: z.enum(["MASCULINO", "FEMININO"]),
-
-      escolaId: z.string().uuid().optional(),
-      role: z.enum(["PROFESSOR", "COORDENADOR"]).optional(),
-      password: z.string().min(6).optional(),
+    const existingUser = await prisma.user.findFirst({
+      where: {
+        OR: [{ email }, { cpf }],
+      },
+      select: { email: true, cpf: true },
     });
 
-    const {
-      name,
-      email,
-      cpf,
-      data_nascimento,
-      sexo,
-      escolaId: escolaIdDoBody,
-      role: roleDoBody,
-      password: passwordDoBody,
-    } = bodySchema.parse(req.body);
-
-    const escolaIdFinal = escolaIdDoBody || (req as any).user?.escolaId;
-
-    if (!escolaIdFinal) {
-      throw new AppError(
-        "É obrigatório informar a escola ou estar logado em uma.",
-        401,
-      );
+    if (existingUser?.email === email) {
+      throw new AppError("E-mail já cadastrado.", 400);
     }
 
-    const userWithSameEmail = await prisma.user.findFirst({ where: { email } });
-
-    if (userWithSameEmail) {
-      throw new AppError("E-mail já cadastrado", 400);
+    if (existingUser?.cpf === cpf) {
+      throw new AppError("CPF já cadastrado.", 400);
     }
 
-    const senhaFinal = passwordDoBody ? passwordDoBody : cpf;
-    const hashedPassword = await hash(senhaFinal, 8);
-    const roleFinal = roleDoBody || "PROFESSOR";
+    const temporaryPassword = generateTemporaryPassword();
+    const passwordHash = await hashPassword(temporaryPassword);
+    const temporaryPasswordExpiresAt = addHours(
+      new Date(),
+      authConfig.temporaryPasswordExpiresInHours,
+    );
 
     const user = await prisma.user.create({
       data: {
@@ -85,15 +88,25 @@ class UsersController {
         cpf,
         data_nascimento,
         sexo,
-        password: hashedPassword,
-        escolaId: escolaIdFinal,
-        role: roleFinal,
+        password: passwordHash,
+        role: "PROFESSOR",
+        escolaId,
+        mustChangePassword: true,
+        temporaryPasswordExpiresAt,
+      },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        role: true,
       },
     });
 
-    const { password: _, ...userWithoutPassword } = user;
-
-    return res.status(201).json(userWithoutPassword);
+    return res.status(201).json({
+      user,
+      temporaryPassword,
+      temporaryPasswordExpiresAt,
+    });
   }
 
   async index(req: Request, res: Response) {
@@ -108,23 +121,13 @@ class UsersController {
         id: true,
         name: true,
         email: true,
-        cpf: true,
-        sexo: true,
       },
       orderBy: {
         name: "asc",
       },
     });
 
-    const professoresSeguros = professores.map((professor) => ({
-      id: professor.id,
-      name: professor.name,
-      email: professor.email,
-      cpf: `***.***.***-${professor.cpf.slice(-2)}`,
-      sexo: professor.sexo,
-    }));
-
-    return res.json(professoresSeguros);
+    return res.json(professores);
   }
 
   async show(req: Request, res: Response) {
@@ -144,38 +147,52 @@ class UsersController {
       },
     });
 
-    if (!professor) throw new AppError("Professor não encontrado.", 404);
+    if (!professor) {
+      throw new AppError("Professor não encontrado.", 404);
+    }
+
     return res.json(professor);
   }
 
   async update(req: Request, res: Response) {
     const paramsSchema = z.object({ id: z.string().uuid() });
-
-    // Adicionamos CPF, Data de Nascimento e Sexo aqui!
-    const bodySchema = z.object({
-      name: z.string().trim().min(3).optional(),
-      email: z.string().email().optional(),
-      cpf: z
-        .string()
-        .trim()
-        .transform((val) => val.replace(/\D/g, ""))
-        .optional(),
-      data_nascimento: z.coerce.date().optional(),
-      sexo: z.enum(["MASCULINO", "FEMININO"]).optional(),
-    });
-
     const { id } = paramsSchema.parse(req.params);
-    const data = bodySchema.parse(req.body);
+    const data = professorUpdateSchema.parse(req.body);
     const { escolaId } = req.user;
 
     const professor = await prisma.user.findFirst({
       where: { id, escolaId, role: "PROFESSOR" },
+      select: { id: true },
     });
-    if (!professor) throw new AppError("Professor não encontrado.", 404);
+
+    if (!professor) {
+      throw new AppError("Professor não encontrado.", 404);
+    }
+
+    if (data.email || data.cpf) {
+      const duplicate = await prisma.user.findFirst({
+        where: {
+          id: { not: id },
+          OR: [
+            ...(data.email ? [{ email: data.email }] : []),
+            ...(data.cpf ? [{ cpf: data.cpf }] : []),
+          ],
+        },
+        select: { email: true, cpf: true },
+      });
+
+      if (data.email && duplicate?.email === data.email) {
+        throw new AppError("E-mail já cadastrado.", 400);
+      }
+
+      if (data.cpf && duplicate?.cpf === data.cpf) {
+        throw new AppError("CPF já cadastrado.", 400);
+      }
+    }
 
     const updatedProfessor = await prisma.user.update({
       where: { id },
-      data, // Passa todos os dados que vieram do frontend
+      data,
       select: {
         id: true,
         name: true,
@@ -196,13 +213,17 @@ class UsersController {
 
     const professor = await prisma.user.findFirst({
       where: { id, escolaId, role: "PROFESSOR" },
+      select: { id: true },
     });
-    if (!professor) throw new AppError("Professor não encontrado.", 404);
 
-    // Regra de Ouro: Não podemos apagar um professor que já tem provas no sistema!
+    if (!professor) {
+      throw new AppError("Professor não encontrado.", 404);
+    }
+
     const provasDoProfessor = await prisma.prova.count({
       where: { professorId: id },
     });
+
     if (provasDoProfessor > 0) {
       throw new AppError(
         "Este professor não pode ser excluído pois já possui provas enviadas no sistema.",
@@ -212,6 +233,125 @@ class UsersController {
 
     await prisma.user.delete({ where: { id } });
     return res.status(204).send();
+  }
+
+  async resetAccess(req: Request, res: Response) {
+    const paramsSchema = z.object({ id: z.string().uuid() });
+    const { id } = paramsSchema.parse(req.params);
+
+    const targetUser = await prisma.user.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        role: true,
+        escolaId: true,
+      },
+    });
+
+    if (!targetUser) {
+      throw new AppError("Usuário não encontrado.", 404);
+    }
+
+    if (targetUser.role !== "PROFESSOR") {
+      throw new AppError(
+        "Coordenadores não podem redefinir o acesso de outro coordenador.",
+        403,
+      );
+    }
+
+    if (targetUser.escolaId !== req.user.escolaId) {
+      throw new AppError(
+        "Você não possui permissão para administrar este professor.",
+        403,
+      );
+    }
+
+    const temporaryPassword = generateTemporaryPassword();
+    const passwordHash = await hashPassword(temporaryPassword);
+    const expiresAt = addHours(
+      new Date(),
+      authConfig.temporaryPasswordExpiresInHours,
+    );
+    const now = new Date();
+
+    await prisma.$transaction([
+      prisma.user.update({
+        where: { id: targetUser.id },
+        data: {
+          password: passwordHash,
+          mustChangePassword: true,
+          temporaryPasswordExpiresAt: expiresAt,
+          tokenVersion: { increment: 1 },
+        },
+      }),
+      prisma.passwordResetToken.updateMany({
+        where: { userId: targetUser.id, usedAt: null },
+        data: { usedAt: now },
+      }),
+    ]);
+
+    console.info("ADMIN_ACCESS_RESET");
+
+    return res.json({
+      temporaryPassword,
+      expiresAt,
+    });
+  }
+
+  async changePassword(req: Request, res: Response) {
+    const bodySchema = z.object({
+      currentPassword: z.string().min(1).max(72),
+      newPassword: z.string().min(1).max(72),
+    });
+
+    const { currentPassword, newPassword } = bodySchema.parse(req.body);
+    const user = await prisma.user.findUnique({ where: { id: req.user.id } });
+
+    if (!user) {
+      throw new AppError("Usuário não encontrado.", 404);
+    }
+
+    const currentPasswordMatches = await verifyPassword(
+      currentPassword,
+      user.password,
+    );
+
+    if (!currentPasswordMatches) {
+      throw new AppError("Senha atual inválida.", 401);
+    }
+
+    await assertPasswordPolicy(newPassword, {
+      cpf: user.cpf,
+      email: user.email,
+      currentPasswordHash: user.password,
+    });
+
+    const passwordHash = await hashPassword(newPassword);
+    const now = new Date();
+
+    await prisma.$transaction([
+      prisma.user.update({
+        where: { id: user.id },
+        data: {
+          password: passwordHash,
+          mustChangePassword: false,
+          temporaryPasswordExpiresAt: null,
+          passwordChangedAt: now,
+          tokenVersion: { increment: 1 },
+        },
+      }),
+      prisma.passwordResetToken.updateMany({
+        where: { userId: user.id, usedAt: null },
+        data: { usedAt: now },
+      }),
+    ]);
+
+    console.info("PASSWORD_CHANGED");
+
+    return res.json({
+      message: "Senha alterada com sucesso. Entre novamente com a nova senha.",
+      requiresLogin: true,
+    });
   }
 }
 
