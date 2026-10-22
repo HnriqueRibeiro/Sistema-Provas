@@ -1,50 +1,67 @@
-import { Request, Response, NextFunction } from "express";
+import { Request, Response } from "express";
 import { z } from "zod";
 import { prisma } from "../database/prisma.js";
 import { AppError } from "../utils/AppError.js";
-import { compare } from "bcrypt";
-import jwt, { SignOptions } from "jsonwebtoken";
-import { authConfig } from "../configs/auth.js";
+import {
+  createPasswordChangeToken,
+  createSessionToken,
+} from "../services/auth-token-service.js";
+import {
+  normalizeEmail,
+  verifyPassword,
+} from "../services/password-service.js";
+
+const DUMMY_PASSWORD_HASH =
+  "$2b$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy";
 
 class SessionsController {
-  async create(req: Request, res: Response, next: NextFunction) {
+  async create(req: Request, res: Response) {
     const bodySchema = z.object({
-      email: z.string().email({ message: "Formato de email inválido" }),
-      password: z
+      email: z
         .string()
-        .min(6, { message: "Senha deve ter no mínimo 6 caracteres" }),
+        .trim()
+        .email({ message: "Formato de e-mail inválido" })
+        .transform((value) => normalizeEmail(value)),
+      password: z.string().min(1, { message: "Senha obrigatória" }).max(72),
     });
 
     const { email, password } = bodySchema.parse(req.body);
 
-    const user = await prisma.user.findFirst({ where: { email } });
+    const user = await prisma.user.findUnique({ where: { email } });
 
     if (!user) {
-      throw new AppError("Email ou senha invalidos", 401);
+      await verifyPassword(password, DUMMY_PASSWORD_HASH);
+      throw new AppError("E-mail ou senha inválidos.", 401);
     }
 
-    const passwordMatch = await compare(password, user.password);
+    const passwordMatch = await verifyPassword(password, user.password);
 
     if (!passwordMatch) {
-      throw new AppError("Email ou senha invalidos", 401);
+      throw new AppError("E-mail ou senha inválidos.", 401);
     }
 
-    const { secret, expiresIn } = authConfig.jwt;
+    if (user.mustChangePassword) {
+      const now = new Date();
 
-    const token = jwt.sign(
-      {
-        role: user.role,
-        escolaId: user.escolaId,
-      },
-      secret,
-      {
-        subject: user.id,
-        expiresIn,
-      } as SignOptions,
-    );
+      if (
+        !user.temporaryPasswordExpiresAt ||
+        user.temporaryPasswordExpiresAt <= now
+      ) {
+        throw new AppError(
+          "Seu acesso temporário expirou. Procure a coordenação da escola para gerar um novo acesso.",
+          401,
+        );
+      }
 
-    // CORREÇÃO DE SEGURANÇA: Filtramos os dados sensíveis antes de enviar
-    const userSeguro = {
+      return res.json({
+        requiresPasswordChange: true,
+        passwordChangeToken: createPasswordChangeToken(user),
+      });
+    }
+
+    const token = createSessionToken(user);
+
+    const safeUser = {
       id: user.id,
       name: user.name,
       email: user.email,
@@ -52,7 +69,8 @@ class SessionsController {
       escolaId: user.escolaId,
     };
 
-    res.json({ token, user: userSeguro });
+    return res.json({ token, user: safeUser });
   }
 }
+
 export { SessionsController };
