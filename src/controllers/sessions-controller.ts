@@ -1,11 +1,13 @@
 import { Request, Response } from "express";
 import { z } from "zod";
 import { prisma } from "../database/prisma.js";
-import { AppError } from "../utils/AppError.js";
+import { createSessionToken } from "../services/auth-token-service.js";
 import {
-  createPasswordChangeToken,
-  createSessionToken,
-} from "../services/auth-token-service.js";
+  clearLoginFailures,
+  getLoginAttemptState,
+  loginAttemptConfig,
+  registerLoginFailure,
+} from "../services/login-attempt-service.js";
 import {
   normalizeEmail,
   verifyPassword,
@@ -13,6 +15,14 @@ import {
 
 const DUMMY_PASSWORD_HASH =
   "$2b$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy";
+
+function invalidCredentialsMessage(attemptsRemaining: number) {
+  if (attemptsRemaining === 1) {
+    return "E-mail ou senha inválidos. Você tem mais 1 tentativa antes de um bloqueio temporário.";
+  }
+
+  return `E-mail ou senha inválidos. Você tem mais ${attemptsRemaining} tentativas antes de um bloqueio temporário.`;
+}
 
 class SessionsController {
   async create(req: Request, res: Response) {
@@ -26,41 +36,62 @@ class SessionsController {
     });
 
     const { email, password } = bodySchema.parse(req.body);
+    const ip = req.ip || "unknown";
+    const attemptState = getLoginAttemptState(email, ip);
+
+    if (attemptState.blocked) {
+      res.setHeader("Retry-After", String(attemptState.retryAfterSeconds ?? 300));
+      return res.status(429).json({
+        message: `Você errou a senha ${loginAttemptConfig.maxFailedAttempts} vezes. Por segurança, o acesso foi bloqueado por ${loginAttemptConfig.blockDurationMinutes} minutos. Você também pode usar “Esqueceu sua senha?”.`,
+        attemptsRemaining: 0,
+        retryAfterSeconds: attemptState.retryAfterSeconds,
+      });
+    }
 
     const user = await prisma.user.findUnique({ where: { email } });
 
     if (!user) {
       await verifyPassword(password, DUMMY_PASSWORD_HASH);
-      throw new AppError("E-mail ou senha inválidos.", 401);
+      const failure = registerLoginFailure(email, ip);
+
+      if (failure.blocked) {
+        res.setHeader("Retry-After", String(failure.retryAfterSeconds ?? 300));
+        return res.status(429).json({
+          message: `Você errou a senha ${loginAttemptConfig.maxFailedAttempts} vezes. Por segurança, o acesso foi bloqueado por ${loginAttemptConfig.blockDurationMinutes} minutos. Você também pode usar “Esqueceu sua senha?”.`,
+          attemptsRemaining: 0,
+          retryAfterSeconds: failure.retryAfterSeconds,
+        });
+      }
+
+      return res.status(401).json({
+        message: invalidCredentialsMessage(failure.attemptsRemaining),
+        attemptsRemaining: failure.attemptsRemaining,
+      });
     }
 
     const passwordMatch = await verifyPassword(password, user.password);
 
     if (!passwordMatch) {
-      throw new AppError("E-mail ou senha inválidos.", 401);
-    }
+      const failure = registerLoginFailure(email, ip);
 
-    if (user.mustChangePassword) {
-      const now = new Date();
-
-      if (
-        !user.temporaryPasswordExpiresAt ||
-        user.temporaryPasswordExpiresAt <= now
-      ) {
-        throw new AppError(
-          "Seu acesso temporário expirou. Procure a coordenação da escola para gerar um novo acesso.",
-          401,
-        );
+      if (failure.blocked) {
+        res.setHeader("Retry-After", String(failure.retryAfterSeconds ?? 300));
+        return res.status(429).json({
+          message: `Você errou a senha ${loginAttemptConfig.maxFailedAttempts} vezes. Por segurança, o acesso foi bloqueado por ${loginAttemptConfig.blockDurationMinutes} minutos. Você também pode usar “Esqueceu sua senha?”.`,
+          attemptsRemaining: 0,
+          retryAfterSeconds: failure.retryAfterSeconds,
+        });
       }
 
-      return res.json({
-        requiresPasswordChange: true,
-        passwordChangeToken: createPasswordChangeToken(user),
+      return res.status(401).json({
+        message: invalidCredentialsMessage(failure.attemptsRemaining),
+        attemptsRemaining: failure.attemptsRemaining,
       });
     }
 
-    const token = createSessionToken(user);
+    clearLoginFailures(email, ip);
 
+    const token = createSessionToken(user);
     const safeUser = {
       id: user.id,
       name: user.name,
