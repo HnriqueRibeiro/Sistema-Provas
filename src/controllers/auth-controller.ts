@@ -4,6 +4,7 @@ import { z } from "zod";
 import { authConfig } from "../configs/auth.js";
 import { prisma } from "../database/prisma.js";
 import { env } from "../env.js";
+import { clearLoginFailures } from "../services/login-attempt-service.js";
 import { mailService } from "../services/mail-service.js";
 import {
   assertPasswordPolicy,
@@ -155,6 +156,7 @@ class AuthController {
       });
     });
 
+    clearLoginFailures(resetToken.user.email, req.ip || "unknown");
     console.info("PASSWORD_RESET_COMPLETED");
 
     return res.json({
