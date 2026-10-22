@@ -1,39 +1,63 @@
 import jwt from "jsonwebtoken";
-import { authConfig } from "../configs/auth.js";
-import { AppError } from "../utils/AppError.js";
 import { Request, Response, NextFunction } from "express";
+import { authConfig } from "../configs/auth.js";
+import { prisma } from "../database/prisma.js";
+import { AppError } from "../utils/AppError.js";
+import type { SessionTokenPayload } from "../services/auth-token-service.js";
 
-interface TokenPayload {
-  role: string;
-  sub: string;
-  escolaId: string;
-}
-
-function ensureAuthenticated(req: Request, res: Response, next: NextFunction) {
+async function ensureAuthenticated(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+) {
   try {
     const authHeader = req.headers.authorization;
 
     if (!authHeader) {
-      throw new AppError("JWT token not found", 401);
+      throw new AppError("JWT token não encontrado.", 401);
     }
 
-    const [, token] = authHeader.split(" ");
+    const [scheme, token] = authHeader.split(" ");
 
-    const {
-      role,
-      sub: user_id,
-      escolaId,
-    } = jwt.verify(token, authConfig.jwt.secret) as TokenPayload;
+    if (scheme !== "Bearer" || !token) {
+      throw new AppError("JWT token inválido.", 401);
+    }
 
-    // A linha vermelha vai aparecer aqui temporariamente. Vamos resolvê-la no Passo 2.
+    const payload = jwt.verify(
+      token,
+      authConfig.jwt.secret,
+    ) as SessionTokenPayload;
+
+    if (
+      typeof payload.sub !== "string" ||
+      typeof payload.tokenVersion !== "number"
+    ) {
+      throw new AppError("JWT token inválido.", 401);
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { id: payload.sub },
+      select: {
+        id: true,
+        role: true,
+        escolaId: true,
+        tokenVersion: true,
+      },
+    });
+
+    if (!user || user.tokenVersion !== payload.tokenVersion) {
+      throw new AppError("Sessão inválida ou encerrada.", 401);
+    }
+
     req.user = {
-      id: user_id,
-      role,
-      escolaId,
+      id: user.id,
+      role: user.role,
+      escolaId: user.escolaId,
     };
+
     return next();
-  } catch (error) {
-    throw new AppError("Invalid JWT token", 401);
+  } catch {
+    throw new AppError("Sessão inválida ou expirada.", 401);
   }
 }
 
