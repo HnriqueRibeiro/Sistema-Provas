@@ -2,14 +2,31 @@ import { Router } from "express";
 import { UsersController } from "../controllers/users-controller.js";
 import { ensureAuthenticated } from "../middlewares/ensure-authenticated.js";
 import { verifyUserAuthorization } from "../middlewares/verify-user-authorization.js";
+import { createRateLimit } from "../middlewares/rate-limit.js";
 
 const usersRoutes = Router();
 const usersController = new UsersController();
 
-// Criação de usuário (como já tínhamos)
-usersRoutes.post("/", usersController.create);
+const passwordChangeRateLimit = createRateLimit({
+  namespace: "authenticated-password-change",
+  windowMs: 15 * 60 * 1000,
+  max: 8,
+});
 
-// NOVA ROTA: Listar professores (Apenas o coordenador logado pode ver)
+usersRoutes.post(
+  "/",
+  ensureAuthenticated,
+  verifyUserAuthorization(["COORDENADOR"]),
+  usersController.create,
+);
+
+usersRoutes.patch(
+  "/me/password",
+  ensureAuthenticated,
+  passwordChangeRateLimit,
+  usersController.changePassword,
+);
+
 usersRoutes.get(
   "/professores",
   ensureAuthenticated,
@@ -17,19 +34,27 @@ usersRoutes.get(
   usersController.index,
 );
 
-// NOVAS ROTAS (Para os 3 ícones do frontend)
+usersRoutes.post(
+  "/:id/reset-access",
+  ensureAuthenticated,
+  verifyUserAuthorization(["COORDENADOR"]),
+  usersController.resetAccess,
+);
+
 usersRoutes.get(
   "/:id",
   ensureAuthenticated,
   verifyUserAuthorization(["COORDENADOR"]),
   usersController.show,
 );
+
 usersRoutes.put(
   "/:id",
   ensureAuthenticated,
   verifyUserAuthorization(["COORDENADOR"]),
   usersController.update,
 );
+
 usersRoutes.delete(
   "/:id",
   ensureAuthenticated,
