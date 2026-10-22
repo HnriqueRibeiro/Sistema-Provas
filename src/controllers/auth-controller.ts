@@ -4,10 +4,6 @@ import { z } from "zod";
 import { authConfig } from "../configs/auth.js";
 import { prisma } from "../database/prisma.js";
 import { env } from "../env.js";
-import {
-  createSessionToken,
-  verifyPasswordChangeToken,
-} from "../services/auth-token-service.js";
 import { mailService } from "../services/mail-service.js";
 import {
   assertPasswordPolicy,
@@ -32,33 +28,12 @@ const resetPasswordSchema = z.object({
   newPassword: z.string().min(1).max(72),
 });
 
-const firstAccessSchema = z.object({
-  token: z.string().min(1, { message: "Token obrigatório" }),
-  newPassword: z.string().min(1).max(72),
-});
-
 function hashResetToken(token: string) {
   return createHash("sha256").update(token).digest("hex");
 }
 
 function addMinutes(date: Date, minutes: number) {
   return new Date(date.getTime() + minutes * 60 * 1000);
-}
-
-function safeUser(user: {
-  id: string;
-  name: string;
-  email: string;
-  role: string;
-  escolaId: string;
-}) {
-  return {
-    id: user.id,
-    name: user.name,
-    email: user.email,
-    role: user.role,
-    escolaId: user.escolaId,
-  };
 }
 
 class AuthController {
@@ -107,6 +82,7 @@ class AuthController {
         console.error("PASSWORD_RESET_EMAIL_FAILED");
       }
     } else {
+      // Mantém trabalho semelhante para reduzir diferença de tempo entre e-mail existente e inexistente.
       hashResetToken(randomBytes(32).toString("hex"));
     }
 
@@ -165,8 +141,6 @@ class AuthController {
         where: { id: resetToken.userId },
         data: {
           password: passwordHash,
-          mustChangePassword: false,
-          temporaryPasswordExpiresAt: null,
           passwordChangedAt: now,
           tokenVersion: { increment: 1 },
         },
@@ -185,78 +159,6 @@ class AuthController {
 
     return res.json({
       message: "Sua senha foi redefinida com sucesso. Faça login novamente.",
-    });
-  }
-
-  async firstAccessChangePassword(req: Request, res: Response) {
-    const { token, newPassword } = firstAccessSchema.parse(req.body);
-    const payload = verifyPasswordChangeToken(token);
-    const now = new Date();
-
-    const user = await prisma.user.findUnique({
-      where: { id: payload.sub },
-    });
-
-    if (!user || user.tokenVersion !== payload.tokenVersion) {
-      throw new AppError("Token de primeiro acesso inválido ou expirado.", 401);
-    }
-
-    if (!user.mustChangePassword) {
-      throw new AppError("Este acesso inicial já foi concluído.", 400);
-    }
-
-    if (
-      !user.temporaryPasswordExpiresAt ||
-      user.temporaryPasswordExpiresAt <= now
-    ) {
-      throw new AppError(
-        "Seu acesso temporário expirou. Procure a coordenação da escola para gerar um novo acesso.",
-        401,
-      );
-    }
-
-    await assertPasswordPolicy(newPassword, {
-      cpf: user.cpf,
-      email: user.email,
-      currentPasswordHash: user.password,
-    });
-
-    const passwordHash = await hashPassword(newPassword);
-
-    const updatedUser = await prisma.$transaction(async (tx) => {
-      const updated = await tx.user.update({
-        where: { id: user.id },
-        data: {
-          password: passwordHash,
-          mustChangePassword: false,
-          temporaryPasswordExpiresAt: null,
-          passwordChangedAt: now,
-          tokenVersion: { increment: 1 },
-        },
-        select: {
-          id: true,
-          name: true,
-          email: true,
-          role: true,
-          escolaId: true,
-          tokenVersion: true,
-        },
-      });
-
-      await tx.passwordResetToken.updateMany({
-        where: { userId: user.id, usedAt: null },
-        data: { usedAt: now },
-      });
-
-      return updated;
-    });
-
-    const sessionToken = createSessionToken(updatedUser);
-    console.info("FIRST_ACCESS_COMPLETED");
-
-    return res.json({
-      token: sessionToken,
-      user: safeUser(updatedUser),
     });
   }
 }
