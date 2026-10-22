@@ -84,7 +84,7 @@ MAIL_PROVIDER_API_KEY=
 
 ## Migration
 
-A migration adiciona ao usuário:
+A migration versionada em `prisma/migrations/20261022210000_auth_password_recovery` adiciona ao usuário:
 
 - `mustChangePassword Boolean @default(false)`;
 - `temporaryPasswordExpiresAt DateTime?`;
@@ -95,18 +95,18 @@ Também adiciona o model `PasswordResetToken` com `id`, `userId`, `tokenHash`, `
 
 Usuários existentes permanecem com `mustChangePassword=false`. Para migrá-los gradualmente, use a ação administrativa **Redefinir acesso**.
 
-Depois de atualizar o código local:
+Depois de atualizar o código local e configurar o `.env`:
 
 ```bash
 npm install
-npx prisma migrate dev --name auth_password_recovery
+npx prisma migrate dev
 npx prisma generate
 npm run typecheck
 npm run build
 npm run dev
 ```
 
-Se o banco Supabase for compartilhado/produção, não use `migrate dev` diretamente contra produção. Gere/revise a migration em ambiente de desenvolvimento e aplique em produção com o fluxo de deploy apropriado (`prisma migrate deploy`). Nunca use `prisma migrate reset`.
+A migration já está versionada; não crie outra migration com o mesmo nome. Se o banco Supabase for compartilhado/produção, não use `migrate dev` diretamente contra produção. Revise a migration versionada e aplique no ambiente de produção com `npx prisma migrate deploy`. Nunca use `prisma migrate reset`.
 
 ## Rotas de autenticação
 
