@@ -1,23 +1,18 @@
 import { Router } from "express";
 import { SessionsController } from "../controllers/sessions-controller.js";
-import {
-  createRateLimit,
-  fingerprintRateLimitValue,
-} from "../middlewares/rate-limit.js";
+import { createRateLimit } from "../middlewares/rate-limit.js";
 
 const sessionsRoutes = Router();
 const sessionsController = new SessionsController();
 
-const loginRateLimit = createRateLimit({
-  namespace: "login",
+// Proteção geral contra abuso por IP. As 3 tentativas incorretas por e-mail/IP
+// são controladas no SessionsController e contam apenas credenciais inválidas.
+const loginAbuseRateLimit = createRateLimit({
+  namespace: "login-abuse-ip",
   windowMs: 15 * 60 * 1000,
-  max: 8,
-  keyGenerator: (req) =>
-    `${req.ip || "unknown"}:${fingerprintRateLimitValue(
-      String(req.body?.email ?? "").trim().toLowerCase(),
-    )}`,
+  max: 30,
 });
 
-sessionsRoutes.post("/", loginRateLimit, sessionsController.create);
+sessionsRoutes.post("/", loginAbuseRateLimit, sessionsController.create);
 
 export { sessionsRoutes };
