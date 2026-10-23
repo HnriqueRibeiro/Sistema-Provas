@@ -38,6 +38,7 @@ app.use((req, res, next) => {
     "Permissions-Policy",
     "camera=(), microphone=(), geolocation=()",
   );
+  res.setHeader("Cache-Control", "no-store");
   next();
 });
 
