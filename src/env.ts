@@ -20,12 +20,16 @@ const envSchema = z
     JWT_SECRET: z.string().min(1),
     FRONTEND_URL: z.string().url().default("http://localhost:3333"),
     BCRYPT_SALT_ROUNDS: z.coerce.number().int().min(10).max(15).default(12),
+
     GMAIL_USER: optionalEmail,
     GMAIL_CLIENT_ID: optionalString,
     GMAIL_CLIENT_SECRET: optionalString,
     GMAIL_REFRESH_TOKEN: optionalString,
-    SUPABASE_URL: optionalString,
-    SUPABASE_ANON_KEY: optionalString,
+
+    R2_ACCOUNT_ID: optionalString,
+    R2_ACCESS_KEY_ID: optionalString,
+    R2_SECRET_ACCESS_KEY: optionalString,
+    R2_BUCKET_NAME: optionalString,
   })
   .superRefine((data, ctx) => {
     if (data.NODE_ENV !== "production") return;
@@ -35,6 +39,10 @@ const envSchema = z
       "GMAIL_CLIENT_ID",
       "GMAIL_CLIENT_SECRET",
       "GMAIL_REFRESH_TOKEN",
+      "R2_ACCOUNT_ID",
+      "R2_ACCESS_KEY_ID",
+      "R2_SECRET_ACCESS_KEY",
+      "R2_BUCKET_NAME",
     ] as const;
 
     for (const field of requiredFields) {
