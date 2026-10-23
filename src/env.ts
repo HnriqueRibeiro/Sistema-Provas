@@ -12,15 +12,6 @@ const optionalString = z.preprocess(
   emptyToUndefined,
   z.string().optional(),
 );
-const optionalGmailAppPassword = z.preprocess(
-  (value) => {
-    const normalized = emptyToUndefined(value);
-    return typeof normalized === "string"
-      ? normalized.replace(/\s/g, "")
-      : normalized;
-  },
-  z.string().min(16).optional(),
-);
 
 const envSchema = z
   .object({
@@ -29,27 +20,29 @@ const envSchema = z
     JWT_SECRET: z.string().min(1),
     FRONTEND_URL: z.string().url().default("http://localhost:3333"),
     BCRYPT_SALT_ROUNDS: z.coerce.number().int().min(10).max(15).default(12),
-    MAIL_FROM: optionalEmail,
     GMAIL_USER: optionalEmail,
-    GMAIL_APP_PASSWORD: optionalGmailAppPassword,
+    GMAIL_CLIENT_ID: optionalString,
+    GMAIL_CLIENT_SECRET: optionalString,
+    GMAIL_REFRESH_TOKEN: optionalString,
     SUPABASE_URL: optionalString,
     SUPABASE_ANON_KEY: optionalString,
   })
   .superRefine((data, ctx) => {
-    if (data.NODE_ENV === "production") {
-      if (!data.GMAIL_USER) {
-        ctx.addIssue({
-          code: "custom",
-          path: ["GMAIL_USER"],
-          message: "GMAIL_USER é obrigatório em produção.",
-        });
-      }
+    if (data.NODE_ENV !== "production") return;
 
-      if (!data.GMAIL_APP_PASSWORD) {
+    const requiredFields = [
+      "GMAIL_USER",
+      "GMAIL_CLIENT_ID",
+      "GMAIL_CLIENT_SECRET",
+      "GMAIL_REFRESH_TOKEN",
+    ] as const;
+
+    for (const field of requiredFields) {
+      if (!data[field]) {
         ctx.addIssue({
           code: "custom",
-          path: ["GMAIL_APP_PASSWORD"],
-          message: "GMAIL_APP_PASSWORD é obrigatório em produção.",
+          path: [field],
+          message: `${field} é obrigatório em produção.`,
         });
       }
     }
