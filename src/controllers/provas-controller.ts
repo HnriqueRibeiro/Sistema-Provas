@@ -19,15 +19,31 @@ class ProvasController {
       bodySchema.parse(req.body);
     const { id: professorId, escolaId } = req.user;
 
+    const turmaAutorizada = await prisma.turma.findFirst({
+      where: {
+        id: turmaId,
+        escolaId,
+        professores: {
+          some: { id: professorId },
+        },
+      },
+      select: { id: true },
+    });
+
+    if (!turmaAutorizada) {
+      throw new AppError(
+        "Turma não encontrada ou não vinculada a este professor.",
+        403,
+      );
+    }
+
     if (!req.file) {
       throw new AppError("O arquivo da prova é obrigatório.", 400);
     }
 
-    // 1. Cria um nome único sem espaços para o arquivo
     const fileHash = crypto.randomBytes(10).toString("hex");
     const fileName = `${fileHash}-${req.file.originalname.replace(/\s/g, "_")}`;
 
-    // 2. Envia o arquivo da Memória RAM (buffer) direto para o bucket "provas" no Supabase
     const { error: uploadError } = await supabase.storage
       .from("provas")
       .upload(fileName, req.file.buffer, {
@@ -39,12 +55,10 @@ class ProvasController {
       throw new AppError("Erro ao enviar o arquivo para a nuvem.", 500);
     }
 
-    // 3. Pega o Link Público oficial do arquivo gerado pelo Supabase
     const { data: publicUrlData } = supabase.storage
       .from("provas")
       .getPublicUrl(fileName);
 
-    // 4. Salva no banco de dados com a URL completa da nuvem
     const prova = await prisma.prova.create({
       data: {
         titulo,
@@ -53,7 +67,7 @@ class ProvasController {
         anoLetivo,
         turmaId,
         professorId,
-        arquivo_url: publicUrlData.publicUrl, // Salvando o link real da internet
+        arquivo_url: publicUrlData.publicUrl,
       },
     });
 
@@ -113,12 +127,10 @@ class ProvasController {
     const { status, motivoCancelamento } = bodySchema.parse(req.body);
     const { role, escolaId } = req.user;
 
-    // Trava de segurança: Somente Coordenadores podem avaliar provas
     if (role !== "COORDENADOR") {
       throw new AppError("Apenas coordenadores podem avaliar provas.", 403);
     }
 
-    // Verifica se a prova existe e pertence a uma turma da mesma escola
     const prova = await prisma.prova.findFirst({
       where: { id, turma: { escolaId } },
     });
@@ -127,12 +139,11 @@ class ProvasController {
       throw new AppError("Prova não encontrada.", 404);
     }
 
-    // Atualiza a prova no banco
     const provaAtualizada = await prisma.prova.update({
       where: { id },
       data: {
         status,
-        motivo_cancelamento: status === "CANCELADA" ? motivoCancelamento : null, // Só salva o motivo se for cancelada
+        motivo_cancelamento: status === "CANCELADA" ? motivoCancelamento : null,
       },
     });
 
@@ -159,14 +170,11 @@ class ProvasController {
       );
     }
 
-    // 1. Deleta do Prisma
     await prisma.prova.delete({ where: { id } });
 
-    // 2. Extrai o nome real do arquivo no final do link para poder apagar da nuvem
     const fileName = prova.arquivo_url.split("/").pop();
 
     if (fileName) {
-      // 3. Deleta o arquivo do Supabase
       await supabase.storage.from("provas").remove([fileName]);
     }
 
