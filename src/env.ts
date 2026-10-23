@@ -12,10 +12,15 @@ const optionalString = z.preprocess(
   emptyToUndefined,
   z.string().optional(),
 );
+const portSchema = z.preprocess(
+  emptyToUndefined,
+  z.coerce.number().int().min(1).max(65535).default(3000),
+);
 
 const envSchema = z
   .object({
     NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
+    PORT: portSchema,
     DATABASE_URL: z.string().url(),
     JWT_SECRET: z.string().min(1),
     FRONTEND_URL: z.string().url().default("http://localhost:3333"),
