@@ -60,6 +60,15 @@ function safeOriginalFileName(value: string) {
   return (withoutControls || "arquivo").slice(0, 255);
 }
 
+function safeAsciiHeaderFileName(value: string) {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^\x20-\x7E]/g, "_")
+    .replace(/[\\"]/g, "_")
+    .slice(0, 180);
+}
+
 class ObjectStorageService {
   buildProofKey(escolaId: string, contentType: string) {
     const extension = EXTENSION_BY_MIME[contentType];
@@ -83,6 +92,7 @@ class ObjectStorageService {
   }) {
     const config = requireR2Config();
     const originalFileName = safeOriginalFileName(input.originalFileName);
+    const headerFileName = safeAsciiHeaderFileName(originalFileName) || "arquivo";
 
     await getClient().send(
       new PutObjectCommand({
@@ -91,7 +101,7 @@ class ObjectStorageService {
         Body: input.body,
         ContentType: input.contentType,
         ContentLength: input.body.length,
-        ContentDisposition: `inline; filename="${originalFileName}"`,
+        ContentDisposition: `inline; filename="${headerFileName}"`,
         Metadata: {
           "original-file-name": Buffer.from(originalFileName, "utf8").toString(
             "base64url",
