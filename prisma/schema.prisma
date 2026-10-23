@@ -87,7 +87,14 @@ model Prova {
   anoLetivo String      @db.VarChar(9)
 
   motivo_cancelamento String? @db.VarChar(500)
-  arquivo_url         String  @db.VarChar(500)
+
+  // Compatibilidade temporária com arquivos antigos do Supabase.
+  // Novos uploads usam arquivo_key no R2 e nunca persistem URL assinada.
+  arquivo_url           String? @db.VarChar(500)
+  arquivo_key           String? @db.VarChar(500)
+  arquivo_nome_original String? @db.VarChar(255)
+  arquivo_mime_type     String? @db.VarChar(150)
+  arquivo_tamanho       Int?
 
   professorId String @db.Uuid
   professor   User   @relation(fields: [professorId], references: [id])
@@ -98,6 +105,7 @@ model Prova {
   create_at  DateTime @default(now()) @map("created_at")
   updated_at DateTime @updatedAt @map("updated_at")
 
+  @@index([arquivo_key])
   @@map("provas")
 }
 
