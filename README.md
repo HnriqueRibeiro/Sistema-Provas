@@ -1,10 +1,10 @@
 # Sistema de Gestão de Provas — Backend
 
-API Node.js + Express 5 + TypeScript + Prisma 6 + PostgreSQL/Supabase.
+API Node.js + Express 5 + TypeScript + Prisma 6 + PostgreSQL.
 
 ## Autenticação
 
-A autenticação é própria da API, usando JWT e Bcrypt. Supabase é utilizado como infraestrutura de banco de dados e Storage; o projeto não utiliza Supabase Auth.
+A autenticação é própria da API, usando JWT e Bcrypt.
 
 ### Login
 
@@ -22,35 +22,32 @@ Ao criar um professor via `POST /users`:
 - a escola é obtida de `req.user.escolaId`;
 - a role é definida no backend como `PROFESSOR`;
 - o CPF é normalizado para 11 números e utilizado como senha inicial;
-- o CPF usado como senha nunca é armazenado em texto puro no campo `password`;
-- o backend gera e salva somente o hash Bcrypt da senha inicial.
-
-O CPF continua armazenado no campo próprio `cpf` porque faz parte do cadastro do professor. A coluna `password` contém apenas o hash Bcrypt.
+- o campo `password` recebe somente o hash Bcrypt da senha inicial.
 
 Não existe fluxo obrigatório de primeiro acesso, senha temporária aleatória ou tela autenticada de alteração de senha.
 
 ## Tentativas incorretas de login
 
-O backend acompanha falhas de autenticação por combinação de e-mail normalizado e IP.
+O backend acompanha falhas por combinação de e-mail normalizado e IP.
 
-- 1ª senha incorreta: a resposta informa que restam 2 tentativas;
-- 2ª senha incorreta: a resposta informa que resta 1 tentativa;
-- 3ª senha incorreta: o login é bloqueado temporariamente por 5 minutos;
-- um login correto limpa as falhas acumuladas;
-- durante o bloqueio, a resposta utiliza HTTP `429` e envia `Retry-After`;
-- a mensagem também orienta o usuário a utilizar **Esqueceu sua senha?** quando necessário.
+- 1ª senha incorreta: restam 2 tentativas;
+- 2ª senha incorreta: resta 1 tentativa;
+- 3ª senha incorreta: bloqueio temporário de 5 minutos;
+- login correto limpa as falhas acumuladas;
+- durante o bloqueio a API responde HTTP `429` com `Retry-After`;
+- a mensagem orienta o usuário a utilizar **Esqueceu sua senha?** quando necessário.
 
-Além disso, existe um rate limit geral por IP para reduzir abuso automatizado. O controle atual fica em memória; se a API passar a executar em múltiplas instâncias, a evolução recomendada é armazenar esse estado em Redis ou serviço equivalente.
+O controle atual fica em memória. Caso a API passe a executar em múltiplas instâncias, a evolução recomendada é usar Redis ou serviço equivalente.
 
 ## Recuperação de senha por e-mail
 
 ### Solicitar recuperação
 
-`POST /auth/forgot-password` recebe o e-mail e sempre retorna a mesma resposta com status `202`, exista ou não uma conta. Isso reduz enumeração de usuários.
+`POST /auth/forgot-password` recebe o e-mail e sempre retorna a mesma resposta com status `202`, exista ou não uma conta.
 
 Para uma conta existente:
 
-1. a API gera um token aleatório criptograficamente seguro com `node:crypto`;
+1. a API gera um token aleatório com `node:crypto`;
 2. somente o hash SHA-256 do token é armazenado no banco;
 3. o token real aparece apenas no link enviado ao usuário;
 4. o token expira em 30 minutos;
@@ -60,46 +57,54 @@ Para uma conta existente:
 
 `POST /auth/reset-password` recebe `token` e `newPassword`.
 
-A API valida se o token existe, ainda não foi usado e ainda não expirou. Depois aplica a política de senha e atualiza o usuário dentro de uma transação Prisma.
+A nova senha deve:
 
-Ao concluir:
+- ter entre 6 e 8 caracteres;
+- conter somente letras (`A-Z`, `a-z`) e números (`0-9`);
+- ser diferente da senha atual.
+
+A API valida o token e atualiza o usuário dentro de uma transação Prisma. Ao concluir:
 
 - a nova senha é armazenada somente como hash Bcrypt;
 - `passwordChangedAt` é atualizado;
 - `tokenVersion` é incrementado para invalidar sessões antigas;
-- os demais tokens de recuperação pendentes são invalidados;
+- tokens de recuperação pendentes são invalidados;
 - o token utilizado não pode ser reutilizado;
+- o bloqueio de login daquele e-mail/IP é limpo;
 - o usuário deve fazer login novamente.
-
-## Política da nova senha
-
-A política abaixo é aplicada ao fluxo **Esqueceu sua senha?**:
-
-- mínimo de 10 caracteres;
-- máximo de 72 caracteres;
-- não pode ser igual ao CPF;
-- não pode ser igual ao e-mail;
-- não pode ser igual à senha atual.
-
-Não há exigência artificial de símbolo, letra maiúscula ou número.
 
 O custo Bcrypt é configurável por `BCRYPT_SALT_ROUNDS`, com mínimo 10 e padrão 12.
 
-## Serviço de e-mail
+## Envio de e-mail com Gmail API
 
-Os controllers não dependem diretamente de um provedor específico. O `MailService` utiliza uma abstração simples.
+A recuperação de senha utiliza uma conta Gmail dedicada por meio da Gmail API e OAuth 2.0.
 
-Em desenvolvimento, se `MAIL_PROVIDER_URL` não estiver configurada, o link de redefinição pode ser exibido somente no console local para permitir testes.
+Não é utilizado SMTP porque os Droplets da DigitalOcean bloqueiam as portas SMTP de saída. A Gmail API funciona por HTTPS e utiliza apenas o escopo necessário para envio de mensagens (`gmail.send`).
 
-Em produção, configure um gateway HTTP de e-mail usando:
+Em produção configure:
 
 ```env
-MAIL_FROM=
-MAIL_PROVIDER_URL=
-MAIL_PROVIDER_API_KEY=
+GMAIL_USER=
+GMAIL_CLIENT_ID=
+GMAIL_CLIENT_SECRET=
+GMAIL_REFRESH_TOKEN=
 ```
 
-A API envia um `POST` JSON com os dados necessários para a mensagem. Nunca registre JWTs, senhas, hashes, CPF ou tokens de recuperação em logs de produção.
+O backend usa o refresh token para obter um access token no endpoint OAuth do Google e envia a mensagem por `users.messages.send`.
+
+Em desenvolvimento/teste, se as credenciais do Gmail não estiverem configuradas, o link de recuperação é mostrado apenas no console local.
+
+Nunca registre JWTs, senhas, hashes, CPF, client secret ou refresh token em logs de produção.
+
+## Autorização no upload de provas
+
+`POST /provas` é exclusivo de `PROFESSOR` e, antes de enviar o arquivo para o storage, o backend valida que:
+
+- a turma existe;
+- a turma pertence à mesma escola indicada no JWT (`escolaId`);
+- o professor autenticado está vinculado àquela turma.
+
+Se qualquer uma dessas condições falhar, a API responde `403` e o upload não é executado.
 
 ## Variáveis de ambiente
 
@@ -111,48 +116,46 @@ DIRECT_URL=
 JWT_SECRET=
 FRONTEND_URL=http://localhost:3333
 BCRYPT_SALT_ROUNDS=12
-MAIL_FROM=
-MAIL_PROVIDER_URL=
-MAIL_PROVIDER_API_KEY=
+
+GMAIL_USER=
+GMAIL_CLIENT_ID=
+GMAIL_CLIENT_SECRET=
+GMAIL_REFRESH_TOKEN=
+
 SUPABASE_URL=
 SUPABASE_ANON_KEY=
 ```
 
+As variáveis do Supabase ainda existem porque o storage atual será migrado para DigitalOcean Spaces antes da produção.
+
 ## Migrations de autenticação
 
-A migration:
+A migration `20261022210000_auth_password_recovery` criou `PasswordResetToken`, `tokenVersion`, `passwordChangedAt` e campos usados pelo fluxo antigo de senha temporária.
 
-```text
-20261022210000_auth_password_recovery
-```
-
-criou `PasswordResetToken`, `tokenVersion`, `passwordChangedAt` e também campos que eram usados pelo fluxo de senha temporária.
-
-Depois que o fluxo foi simplificado, a migration:
-
-```text
-20261022223000_simplify_auth_flow
-```
-
-remove apenas:
+A migration `20261022223000_simplify_auth_flow` remove somente:
 
 - `must_change_password`;
 - `temporary_password_expires_at`.
 
 Ela preserva usuários, escolas, turmas, provas, senhas atuais, tokens de recuperação, `token_version` e `password_changed_at`.
 
-Para o banco Supabase já existente, utilize migrations versionadas. Não use `prisma migrate reset` e não use `prisma db push` para substituir este fluxo de migrations.
+Não use `prisma migrate reset` ou `prisma db push` para substituir o fluxo versionado de migrations.
 
-Depois de atualizar o código local:
+## Validação local
 
 ```bash
 npm install
-npx prisma migrate deploy
 npx prisma generate
 npm test
 npm run typecheck
 npm run build
 npm run dev
+```
+
+Em produção, use migrations versionadas com:
+
+```bash
+npx prisma migrate deploy
 ```
 
 ## Rotas de autenticação
@@ -163,31 +166,28 @@ POST /auth/forgot-password
 POST /auth/reset-password
 ```
 
-A gestão de professores continua usando as rotas CRUD existentes em `/users`. Não existe mais rota de primeiro acesso, troca de senha autenticada ou reset administrativo de acesso.
+Não existe rota de primeiro acesso, troca de senha autenticada ou reset administrativo de acesso.
 
-## Checklist manual
+## Checklist antes do deploy
 
-Antes do deploy, valide:
-
-- professor novo consegue entrar usando CPF sem pontuação como senha inicial;
-- o campo `password` no banco contém hash Bcrypt e não o CPF em texto puro;
-- login correto funciona normalmente;
-- primeira senha errada informa 2 tentativas restantes;
-- segunda senha errada informa 1 tentativa restante;
-- terceira senha errada gera bloqueio temporário de 5 minutos;
-- login correto limpa falhas anteriores;
+- professor novo entra usando CPF sem pontuação como senha inicial;
+- `password` contém hash Bcrypt;
+- bloqueio ocorre na terceira senha incorreta;
 - **Esqueceu sua senha?** não revela se o e-mail existe;
-- banco armazena somente o hash do reset token;
+- Gmail API envia o link real para o usuário;
 - token expirado, utilizado ou aleatório é recusado;
-- nova senha não pode ser igual ao CPF, e-mail ou senha atual;
-- JWT emitido antes da redefinição deixa de ser válido após o incremento de `tokenVersion`;
-- respostas da API nunca incluem o hash da senha.
+- nova senha aceita somente 6 a 8 caracteres alfanuméricos;
+- JWT antigo deixa de ser válido após redefinição;
+- professor não consegue enviar prova para turma de outra escola;
+- professor não consegue enviar prova para turma à qual não está vinculado;
+- respostas da API nunca incluem hash da senha.
 
-## Melhorias futuras
+## Próximas etapas para produção
 
-Possíveis evoluções, caso o projeto precise crescer:
-
-- Redis para rate limiting e bloqueio de login distribuído;
-- cookies `HttpOnly + Secure + SameSite` ou refresh token seguro;
-- MFA para coordenadores;
-- integração direta com um provedor de e-mail transacional.
+- migrar storage do Supabase para DigitalOcean Spaces privado;
+- restringir CORS ao domínio do frontend;
+- ajustar Dockerfile de produção;
+- configurar Nginx, HTTPS e firewall;
+- configurar PostgreSQL Managed Database;
+- configurar Gmail API/OAuth em produção;
+- executar teste completo de upload, download e recuperação de senha.
