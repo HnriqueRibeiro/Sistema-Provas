@@ -1,15 +1,40 @@
-FROM node:latest
+FROM node:24-bookworm-slim AS builder
 
-RUN mkdir -p /home/node/app/node_modules && chown -R node:node /home/node/app
+WORKDIR /app
 
-WORKDIR /home/node/app
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends openssl ca-certificates \
+  && rm -rf /var/lib/apt/lists/*
 
-COPY . .
+COPY package.json package-lock.json ./
+RUN npm ci
 
-RUN npm install
+COPY prisma ./prisma
+RUN npx prisma generate
 
-COPY --chown=node:node . .
+COPY tsconfig.json ./
+COPY src ./src
+RUN npm run build
 
-EXPOSE 3000
+RUN npm prune --omit=dev
 
-CMD [ "node", "app.js" ]
+FROM node:24-bookworm-slim AS runner
+
+ENV NODE_ENV=production
+WORKDIR /app
+
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends openssl ca-certificates \
+  && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder --chown=node:node /app/package.json ./package.json
+COPY --from=builder --chown=node:node /app/package-lock.json ./package-lock.json
+COPY --from=builder --chown=node:node /app/node_modules ./node_modules
+COPY --from=builder --chown=node:node /app/prisma ./prisma
+COPY --from=builder --chown=node:node /app/dist ./dist
+
+USER node
+
+EXPOSE 10000
+
+CMD ["npm", "start"]
