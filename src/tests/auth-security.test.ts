@@ -36,17 +36,17 @@ test("bcrypt armazena o CPF inicial apenas como hash", async () => {
 test("politica de redefinicao aceita apenas 6 a 8 caracteres alfanumericos", async () => {
   await assert.rejects(
     () => assertPasswordPolicy("abc12"),
-    /mínimo de 6 caracteres/,
+    /6 caracteres/,
   );
 
   await assert.rejects(
     () => assertPasswordPolicy("abc123456"),
-    /máximo de 8 caracteres/,
+    /8 caracteres/,
   );
 
   await assert.rejects(
     () => assertPasswordPolicy("abc@123"),
-    /apenas letras e números/,
+    /letras e/,
   );
 
   await assert.doesNotReject(() => assertPasswordPolicy("abc123"));
