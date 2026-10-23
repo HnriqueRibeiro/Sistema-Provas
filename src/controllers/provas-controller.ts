@@ -1,17 +1,35 @@
 import { Request, Response } from "express";
 import { z } from "zod";
 import { prisma } from "../database/prisma.js";
+import { objectStorageService } from "../services/object-storage-service.js";
 import { AppError } from "../utils/AppError.js";
-import { supabase } from "../database/supabase.js";
-import crypto from "node:crypto";
+
+async function exposeFileUrl<
+  T extends {
+    arquivo_key: string | null;
+    arquivo_url: string | null;
+    [key: string]: unknown;
+  },
+>(prova: T) {
+  const { arquivo_key, ...safeProva } = prova;
+
+  const arquivoUrl = arquivo_key
+    ? await objectStorageService.createSignedReadUrl(arquivo_key)
+    : prova.arquivo_url;
+
+  return {
+    ...safeProva,
+    arquivo_url: arquivoUrl ?? "",
+  };
+}
 
 class ProvasController {
   async create(req: Request, res: Response) {
     const bodySchema = z.object({
-      titulo: z.string(),
-      descricao: z.string(),
+      titulo: z.string().trim().min(1).max(255),
+      descricao: z.string().trim().min(1).max(500),
       bimestre: z.enum(["PRIMEIRO", "SEGUNDO", "TERCEIRO", "QUARTO"]),
-      anoLetivo: z.string(),
+      anoLetivo: z.string().trim().min(4).max(9),
       turmaId: z.string().uuid(),
     });
 
@@ -41,37 +59,56 @@ class ProvasController {
       throw new AppError("O arquivo da prova é obrigatório.", 400);
     }
 
-    const fileHash = crypto.randomBytes(10).toString("hex");
-    const fileName = `${fileHash}-${req.file.originalname.replace(/\s/g, "_")}`;
+    const arquivoKey = objectStorageService.buildProofKey(
+      escolaId,
+      req.file.mimetype,
+    );
+    const arquivoNomeOriginal = objectStorageService.normalizeOriginalFileName(
+      req.file.originalname,
+    );
 
-    const { error: uploadError } = await supabase.storage
-      .from("provas")
-      .upload(fileName, req.file.buffer, {
+    try {
+      await objectStorageService.upload({
+        key: arquivoKey,
+        body: req.file.buffer,
         contentType: req.file.mimetype,
+        originalFileName: arquivoNomeOriginal,
       });
-
-    if (uploadError) {
-      console.error(uploadError);
-      throw new AppError("Erro ao enviar o arquivo para a nuvem.", 500);
+    } catch (error) {
+      console.error("R2_UPLOAD_FAILED", error instanceof Error ? error.message : "unknown");
+      throw new AppError("Erro ao enviar o arquivo da prova.", 500);
     }
 
-    const { data: publicUrlData } = supabase.storage
-      .from("provas")
-      .getPublicUrl(fileName);
+    try {
+      const prova = await prisma.prova.create({
+        data: {
+          titulo,
+          descricao,
+          bimestre,
+          anoLetivo,
+          turmaId,
+          professorId,
+          arquivo_url: null,
+          arquivo_key: arquivoKey,
+          arquivo_nome_original: arquivoNomeOriginal,
+          arquivo_mime_type: req.file.mimetype,
+          arquivo_tamanho: req.file.size,
+        },
+      });
 
-    const prova = await prisma.prova.create({
-      data: {
-        titulo,
-        descricao,
-        bimestre,
-        anoLetivo,
-        turmaId,
-        professorId,
-        arquivo_url: publicUrlData.publicUrl,
-      },
-    });
+      return res.status(201).json(await exposeFileUrl(prova));
+    } catch (error) {
+      try {
+        await objectStorageService.delete(arquivoKey);
+      } catch (cleanupError) {
+        console.error(
+          "R2_ORPHAN_CLEANUP_FAILED",
+          cleanupError instanceof Error ? cleanupError.message : "unknown",
+        );
+      }
 
-    res.status(201).json(prova);
+      throw error;
+    }
   }
 
   async index(req: Request, res: Response) {
@@ -89,7 +126,8 @@ class ProvasController {
       orderBy: { create_at: "desc" },
     });
 
-    res.json(provas);
+    const provasComArquivo = await Promise.all(provas.map(exposeFileUrl));
+    return res.json(provasComArquivo);
   }
 
   async show(req: Request, res: Response) {
@@ -113,14 +151,14 @@ class ProvasController {
       );
     }
 
-    res.json(prova);
+    return res.json(await exposeFileUrl(prova));
   }
 
   async updateStatus(req: Request, res: Response) {
     const paramsSchema = z.object({ id: z.string().uuid() });
     const bodySchema = z.object({
       status: z.enum(["PENDENTE", "CONCLUIDA", "CANCELADA"]),
-      motivoCancelamento: z.string().optional().nullable(),
+      motivoCancelamento: z.string().max(500).optional().nullable(),
     });
 
     const { id } = paramsSchema.parse(req.params);
@@ -147,7 +185,7 @@ class ProvasController {
       },
     });
 
-    res.json(provaAtualizada);
+    return res.json(await exposeFileUrl(provaAtualizada));
   }
 
   async delete(req: Request, res: Response) {
@@ -172,13 +210,18 @@ class ProvasController {
 
     await prisma.prova.delete({ where: { id } });
 
-    const fileName = prova.arquivo_url.split("/").pop();
-
-    if (fileName) {
-      await supabase.storage.from("provas").remove([fileName]);
+    if (prova.arquivo_key) {
+      try {
+        await objectStorageService.delete(prova.arquivo_key);
+      } catch (error) {
+        console.error(
+          "R2_DELETE_FAILED",
+          error instanceof Error ? error.message : "unknown",
+        );
+      }
     }
 
-    res.status(204).send();
+    return res.status(204).send();
   }
 }
 
