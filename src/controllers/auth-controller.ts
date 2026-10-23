@@ -26,7 +26,13 @@ const forgotPasswordSchema = z.object({
 
 const resetPasswordSchema = z.object({
   token: z.string().min(32, { message: "Token inválido" }),
-  newPassword: z.string().min(1).max(72),
+  newPassword: z
+    .string()
+    .min(6, { message: "A senha deve ter no mínimo 6 caracteres." })
+    .max(8, { message: "A senha deve ter no máximo 8 caracteres." })
+    .regex(/^[A-Za-z0-9]+$/, {
+      message: "A senha pode conter apenas letras e números.",
+    }),
 });
 
 function hashResetToken(token: string) {
@@ -83,7 +89,6 @@ class AuthController {
         console.error("PASSWORD_RESET_EMAIL_FAILED");
       }
     } else {
-      // Mantém trabalho semelhante para reduzir diferença de tempo entre e-mail existente e inexistente.
       hashResetToken(randomBytes(32).toString("hex"));
     }
 
