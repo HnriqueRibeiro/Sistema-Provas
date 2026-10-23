@@ -33,44 +33,35 @@ test("bcrypt armazena o CPF inicial apenas como hash", async () => {
   assert.equal(await verifyPassword(cpf, passwordHash), true);
 });
 
-test("politica de redefinicao recusa senha curta, CPF, e-mail e senha atual", async () => {
+test("politica de redefinicao aceita apenas 6 a 8 caracteres alfanumericos", async () => {
   await assert.rejects(
-    () => assertPasswordPolicy("curta"),
-    /mínimo de 10 caracteres/,
+    () => assertPasswordPolicy("abc12"),
+    /mínimo de 6 caracteres/,
   );
 
   await assert.rejects(
-    () =>
-      assertPasswordPolicy("529.982.247-25", {
-        cpf: "52998224725",
-      }),
-    /igual ao CPF/,
+    () => assertPasswordPolicy("abc123456"),
+    /máximo de 8 caracteres/,
   );
 
   await assert.rejects(
-    () =>
-      assertPasswordPolicy("PROFESSOR@ESCOLA.COM", {
-        email: "professor@escola.com",
-      }),
-    /igual ao e-mail/,
+    () => assertPasswordPolicy("abc@123"),
+    /apenas letras e números/,
   );
 
-  const currentPasswordHash = await hashPassword("SenhaAtualSegura123");
+  await assert.doesNotReject(() => assertPasswordPolicy("abc123"));
+  await assert.doesNotReject(() => assertPasswordPolicy("ABC12345"));
+});
+
+test("politica recusa reutilizar a senha atual", async () => {
+  const currentPasswordHash = await hashPassword("abc123");
+
   await assert.rejects(
     () =>
-      assertPasswordPolicy("SenhaAtualSegura123", {
+      assertPasswordPolicy("abc123", {
         currentPasswordHash,
       }),
     /diferente da senha atual/,
-  );
-});
-
-test("politica aceita senha longa que nao coincide com dados do usuario", async () => {
-  await assert.doesNotReject(() =>
-    assertPasswordPolicy("uma senha longa e exclusiva", {
-      cpf: "52998224725",
-      email: "professor@escola.com",
-    }),
   );
 });
 
