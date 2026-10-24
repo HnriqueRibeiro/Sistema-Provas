@@ -26,10 +26,9 @@ const envSchema = z
     FRONTEND_URL: z.string().url().default("http://localhost:3333"),
     BCRYPT_SALT_ROUNDS: z.coerce.number().int().min(10).max(15).default(12),
 
-    GMAIL_USER: optionalEmail,
-    GMAIL_CLIENT_ID: optionalString,
-    GMAIL_CLIENT_SECRET: optionalString,
-    GMAIL_REFRESH_TOKEN: optionalString,
+    RESEND_API_KEY: optionalString,
+    RESEND_FROM_EMAIL: optionalEmail,
+    RESEND_FROM_NAME: optionalString,
 
     R2_ACCOUNT_ID: optionalString,
     R2_ACCESS_KEY_ID: optionalString,
@@ -40,10 +39,8 @@ const envSchema = z
     if (data.NODE_ENV !== "production") return;
 
     const requiredFields = [
-      "GMAIL_USER",
-      "GMAIL_CLIENT_ID",
-      "GMAIL_CLIENT_SECRET",
-      "GMAIL_REFRESH_TOKEN",
+      "RESEND_API_KEY",
+      "RESEND_FROM_EMAIL",
       "R2_ACCOUNT_ID",
       "R2_ACCESS_KEY_ID",
       "R2_SECRET_ACCESS_KEY",
