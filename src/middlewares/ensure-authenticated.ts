@@ -42,10 +42,15 @@ async function ensureAuthenticated(
         role: true,
         escolaId: true,
         tokenVersion: true,
+        ativo: true,
       },
     });
 
-    if (!user || user.tokenVersion !== payload.tokenVersion) {
+    if (
+      !user ||
+      !user.ativo ||
+      user.tokenVersion !== payload.tokenVersion
+    ) {
       throw new AppError("Sessão inválida ou encerrada.", 401);
     }
 
