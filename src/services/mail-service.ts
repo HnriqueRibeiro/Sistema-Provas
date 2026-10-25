@@ -16,7 +16,10 @@ function escapeHtml(value: string) {
 }
 
 function safeSenderName(value: string) {
-  return value.replace(/[\r\n<>]/g, "").trim().slice(0, 120);
+  return value
+    .replace(/[\r\n<>]/g, "")
+    .trim()
+    .slice(0, 120);
 }
 
 function buildMessage(input: PasswordResetMailInput) {
@@ -80,6 +83,14 @@ class MailService {
     });
 
     if (!response.ok) {
+      const errorBody = await response.text();
+
+      console.error("Erro ao enviar e-mail pelo Resend:", {
+        status: response.status,
+        statusText: response.statusText,
+        body: errorBody,
+      });
+
       throw new Error(`Resend retornou status ${response.status}`);
     }
   }

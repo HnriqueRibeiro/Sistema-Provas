@@ -85,8 +85,8 @@ class AuthController {
           resetUrl,
         });
         console.info("PASSWORD_RESET_REQUESTED");
-      } catch {
-        console.error("PASSWORD_RESET_EMAIL_FAILED");
+      } catch (error) {
+        console.error("Failed to send password reset email:", error);
       }
     } else {
       hashResetToken(randomBytes(32).toString("hex"));
@@ -140,7 +140,10 @@ class AuthController {
       });
 
       if (claimedToken.count !== 1) {
-        throw new AppError("Token de recuperação inválido ou já utilizado.", 401);
+        throw new AppError(
+          "Token de recuperação inválido ou já utilizado.",
+          401,
+        );
       }
 
       await tx.user.update({
