@@ -12,20 +12,23 @@ class TurmaProfessoresController {
     const { professorId } = bodySchema.parse(req.body);
     const { escolaId } = req.user;
 
-    // 1. Verifica se a turma existe e pertence à escola do coordenador
     const turma = await prisma.turma.findFirst({
       where: { id: turmaId, escolaId },
     });
     if (!turma) throw new AppError("Turma não encontrada.", 404);
 
-    // 2. Verifica se o usuário a ser adicionado é um professor desta mesma escola
     const professor = await prisma.user.findFirst({
-      where: { id: professorId, escolaId, role: "PROFESSOR" },
+      where: {
+        id: professorId,
+        escolaId,
+        role: "PROFESSOR",
+        ativo: true,
+      },
     });
-    if (!professor)
-      throw new AppError("Professor não encontrado nesta escola.", 404);
+    if (!professor) {
+      throw new AppError("Professor ativo não encontrado nesta escola.", 404);
+    }
 
-    // 3. Cria o vínculo
     await prisma.turma.update({
       where: { id: turmaId },
       data: { professores: { connect: { id: professorId } } },
@@ -48,7 +51,6 @@ class TurmaProfessoresController {
     });
     if (!turma) throw new AppError("Turma não encontrada.", 404);
 
-    // Remove o vínculo
     await prisma.turma.update({
       where: { id: turmaId },
       data: { professores: { disconnect: { id: professorId } } },
