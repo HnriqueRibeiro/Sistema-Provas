@@ -14,10 +14,17 @@ usersRoutes.post(
 );
 
 usersRoutes.get(
-  "/professores",
+  "/",
   ensureAuthenticated,
   verifyUserAuthorization(["COORDENADOR"]),
   usersController.index,
+);
+
+usersRoutes.get(
+  "/professores",
+  ensureAuthenticated,
+  verifyUserAuthorization(["COORDENADOR"]),
+  usersController.indexProfessores,
 );
 
 usersRoutes.get(
@@ -32,6 +39,13 @@ usersRoutes.put(
   ensureAuthenticated,
   verifyUserAuthorization(["COORDENADOR"]),
   usersController.update,
+);
+
+usersRoutes.patch(
+  "/:id/status",
+  ensureAuthenticated,
+  verifyUserAuthorization(["COORDENADOR"]),
+  usersController.updateStatus,
 );
 
 usersRoutes.delete(
