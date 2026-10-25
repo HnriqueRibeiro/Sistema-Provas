@@ -89,6 +89,13 @@ class SessionsController {
       });
     }
 
+    if (!user.ativo) {
+      clearLoginFailures(email, ip);
+      return res.status(403).json({
+        message: "Este acesso está desativado. Procure a coordenação da escola.",
+      });
+    }
+
     clearLoginFailures(email, ip);
 
     const token = createSessionToken(user);
