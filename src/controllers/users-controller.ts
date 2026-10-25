@@ -266,21 +266,34 @@ class UsersController {
       return res.json(user);
     }
 
-    const updatedUser = await prisma.user.update({
-      where: { id },
-      data: ativo
-        ? { ativo: true }
-        : {
-            ativo: false,
-            tokenVersion: { increment: 1 },
+    const now = new Date();
+    const updatedUser = await prisma.$transaction(async (tx) => {
+      if (!ativo) {
+        await tx.passwordResetToken.updateMany({
+          where: {
+            userId: id,
+            usedAt: null,
           },
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        role: true,
-        ativo: true,
-      },
+          data: { usedAt: now },
+        });
+      }
+
+      return tx.user.update({
+        where: { id },
+        data: ativo
+          ? { ativo: true }
+          : {
+              ativo: false,
+              tokenVersion: { increment: 1 },
+            },
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          role: true,
+          ativo: true,
+        },
+      });
     });
 
     return res.json(updatedUser);
