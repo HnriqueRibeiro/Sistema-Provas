@@ -8,7 +8,7 @@ import {
 import { AppError } from "../utils/AppError.js";
 import { isValidCpf, normalizeCpf } from "../utils/cpf.js";
 
-const professorBodySchema = z.object({
+const userBodySchema = z.object({
   name: z.string().trim().min(3, { message: "Informe o nome completo" }),
   email: z
     .string()
@@ -21,9 +21,10 @@ const professorBodySchema = z.object({
     .refine((value) => isValidCpf(value), { message: "CPF inválido" }),
   data_nascimento: z.coerce.date({ message: "Data de nascimento inválida" }),
   sexo: z.enum(["MASCULINO", "FEMININO"]),
+  role: z.enum(["PROFESSOR", "COORDENADOR"]).default("PROFESSOR"),
 });
 
-const professorUpdateSchema = z
+const userUpdateSchema = z
   .object({
     name: z.string().trim().min(3, { message: "Informe o nome completo" }).optional(),
     email: z
@@ -44,9 +45,13 @@ const professorUpdateSchema = z
     message: "Informe ao menos um campo para atualização.",
   });
 
+const statusSchema = z.object({
+  ativo: z.boolean(),
+});
+
 class UsersController {
   async create(req: Request, res: Response) {
-    const { name, email, cpf, data_nascimento, sexo } = professorBodySchema.parse(
+    const { name, email, cpf, data_nascimento, sexo, role } = userBodySchema.parse(
       req.body,
     );
     const { escolaId } = req.user;
@@ -78,7 +83,7 @@ class UsersController {
         data_nascimento,
         sexo,
         password: passwordHash,
-        role: "PROFESSOR",
+        role,
         escolaId,
       },
       select: {
@@ -86,6 +91,7 @@ class UsersController {
         name: true,
         email: true,
         role: true,
+        ativo: true,
       },
     });
 
@@ -95,10 +101,31 @@ class UsersController {
   async index(req: Request, res: Response) {
     const { escolaId } = req.user;
 
+    const users = await prisma.user.findMany({
+      where: { escolaId },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        role: true,
+        ativo: true,
+      },
+      orderBy: {
+        name: "asc",
+      },
+    });
+
+    return res.json(users);
+  }
+
+  async indexProfessores(req: Request, res: Response) {
+    const { escolaId } = req.user;
+
     const professores = await prisma.user.findMany({
       where: {
         escolaId,
         role: "PROFESSOR",
+        ativo: true,
       },
       select: {
         id: true,
@@ -118,8 +145,8 @@ class UsersController {
     const { id } = paramsSchema.parse(req.params);
     const { escolaId } = req.user;
 
-    const professor = await prisma.user.findFirst({
-      where: { id, escolaId, role: "PROFESSOR" },
+    const user = await prisma.user.findFirst({
+      where: { id, escolaId },
       select: {
         id: true,
         name: true,
@@ -127,29 +154,31 @@ class UsersController {
         cpf: true,
         data_nascimento: true,
         sexo: true,
+        role: true,
+        ativo: true,
       },
     });
 
-    if (!professor) {
-      throw new AppError("Professor não encontrado.", 404);
+    if (!user) {
+      throw new AppError("Usuário não encontrado.", 404);
     }
 
-    return res.json(professor);
+    return res.json(user);
   }
 
   async update(req: Request, res: Response) {
     const paramsSchema = z.object({ id: z.string().uuid() });
     const { id } = paramsSchema.parse(req.params);
-    const data = professorUpdateSchema.parse(req.body);
+    const data = userUpdateSchema.parse(req.body);
     const { escolaId } = req.user;
 
-    const professor = await prisma.user.findFirst({
-      where: { id, escolaId, role: "PROFESSOR" },
+    const user = await prisma.user.findFirst({
+      where: { id, escolaId },
       select: { id: true },
     });
 
-    if (!professor) {
-      throw new AppError("Professor não encontrado.", 404);
+    if (!user) {
+      throw new AppError("Usuário não encontrado.", 404);
     }
 
     if (data.email || data.cpf) {
@@ -173,7 +202,7 @@ class UsersController {
       }
     }
 
-    const updatedProfessor = await prisma.user.update({
+    const updatedUser = await prisma.user.update({
       where: { id },
       data,
       select: {
@@ -183,12 +212,81 @@ class UsersController {
         cpf: true,
         sexo: true,
         data_nascimento: true,
+        role: true,
+        ativo: true,
       },
     });
 
-    return res.json(updatedProfessor);
+    return res.json(updatedUser);
   }
 
+  async updateStatus(req: Request, res: Response) {
+    const paramsSchema = z.object({ id: z.string().uuid() });
+    const { id } = paramsSchema.parse(req.params);
+    const { ativo } = statusSchema.parse(req.body);
+    const { escolaId, id: requesterId } = req.user;
+
+    const user = await prisma.user.findFirst({
+      where: { id, escolaId },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        role: true,
+        ativo: true,
+      },
+    });
+
+    if (!user) {
+      throw new AppError("Usuário não encontrado.", 404);
+    }
+
+    if (!ativo && user.id === requesterId) {
+      throw new AppError("Você não pode desativar o seu próprio acesso.", 400);
+    }
+
+    if (!ativo && user.role === "COORDENADOR" && user.ativo) {
+      const activeCoordinators = await prisma.user.count({
+        where: {
+          escolaId,
+          role: "COORDENADOR",
+          ativo: true,
+        },
+      });
+
+      if (activeCoordinators <= 1) {
+        throw new AppError(
+          "Não é possível desativar o único coordenador ativo da escola.",
+          400,
+        );
+      }
+    }
+
+    if (user.ativo === ativo) {
+      return res.json(user);
+    }
+
+    const updatedUser = await prisma.user.update({
+      where: { id },
+      data: ativo
+        ? { ativo: true }
+        : {
+            ativo: false,
+            tokenVersion: { increment: 1 },
+          },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        role: true,
+        ativo: true,
+      },
+    });
+
+    return res.json(updatedUser);
+  }
+
+  // Mantido para compatibilidade administrativa: exclusão definitiva somente de professor sem provas.
   async delete(req: Request, res: Response) {
     const paramsSchema = z.object({ id: z.string().uuid() });
     const { id } = paramsSchema.parse(req.params);
