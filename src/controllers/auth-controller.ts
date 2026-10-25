@@ -50,10 +50,10 @@ class AuthController {
 
     const user = await prisma.user.findUnique({
       where: { email },
-      select: { id: true, name: true, email: true },
+      select: { id: true, name: true, email: true, ativo: true },
     });
 
-    if (user) {
+    if (user?.ativo) {
       const rawToken = randomBytes(32).toString("hex");
       const tokenHash = hashResetToken(rawToken);
       const now = new Date();
@@ -116,7 +116,8 @@ class AuthController {
     if (
       !resetToken ||
       resetToken.usedAt !== null ||
-      resetToken.expiresAt <= now
+      resetToken.expiresAt <= now ||
+      !resetToken.user.ativo
     ) {
       throw new AppError("Token de recuperação inválido ou expirado.", 401);
     }
