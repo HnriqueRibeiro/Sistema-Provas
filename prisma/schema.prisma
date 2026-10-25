@@ -46,6 +46,7 @@ model User {
 
   password String   @db.VarChar(255)
   role     UserRole @default(PROFESSOR)
+  ativo    Boolean  @default(true)
 
   tokenVersion      Int       @default(0) @map("token_version")
   passwordChangedAt DateTime? @map("password_changed_at") @db.Timestamptz(3)
