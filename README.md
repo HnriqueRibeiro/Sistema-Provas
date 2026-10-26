@@ -1,193 +1,197 @@
-# Sistema de Gestão de Provas — Backend
+# Provas — Gestão Escolar
 
-API Node.js + Express 5 + TypeScript + Prisma 6 + PostgreSQL.
+Backend de um sistema web desenvolvido para **centralizar o envio, a organização e o gerenciamento de provas escolares**.
 
-## Autenticação
+O projeto nasceu de uma necessidade real de um colégio municipal: provas eram enviadas diretamente para a coordenação, muitas vezes de forma repetida, ocupando armazenamento no celular e tornando difícil localizar, revisar e encaminhar os arquivos para impressão.
 
-A autenticação é própria da API, usando JWT e Bcrypt.
+A solução permite que professores enviem suas próprias provas para a plataforma, enquanto a coordenação acompanha os materiais de forma centralizada e a equipe responsável pode acessá-los para impressão.
 
-### Login
+> Projeto desenvolvido a partir de um problema real, com foco em regras de negócio, segurança, organização de arquivos e controle de acesso.
 
-`POST /sessions` recebe e-mail e senha. Em caso de sucesso, retorna um JWT com validade de 1 dia contendo `sub`, `role`, `escolaId` e `tokenVersion`.
+## Principais funcionalidades
 
-O middleware `ensureAuthenticated` valida o JWT, consulta o usuário no banco e compara o `tokenVersion` do token com o valor atual do usuário. Uma redefinição de senha incrementa `tokenVersion`, invalidando sessões anteriores.
+- Autenticação com JWT.
+- Perfis de acesso para `PROFESSOR` e `COORDENADOR`.
+- Isolamento dos dados por escola.
+- Cadastro e gerenciamento de professores.
+- Cadastro e gerenciamento de turmas.
+- Vinculação de professores às turmas.
+- Upload de provas em PDF, Word e imagens.
+- Armazenamento privado de arquivos no Cloudflare R2.
+- Geração de URLs assinadas para acesso temporário aos arquivos.
+- Organização das provas por turma, professor, bimestre e ano letivo.
+- Controle de status das provas: `PENDENTE`, `CONCLUIDA` e `CANCELADA`.
+- Recuperação de senha por e-mail.
+- Proteções contra tentativas repetidas de login.
 
-### Senha inicial do professor
+## Perfis e permissões
 
-O sistema é fechado e os professores são cadastrados pelo coordenador.
+| Recurso | Professor | Coordenador |
+| --- | :---: | :---: |
+| Visualizar suas turmas | ✅ | ✅ |
+| Visualizar provas permitidas | ✅ | ✅ |
+| Enviar prova | ✅ | — |
+| Excluir prova | Próprias | ✅ |
+| Alterar status de prova | — | ✅ |
+| Gerenciar professores | — | ✅ |
+| Gerenciar turmas | — | ✅ |
+| Vincular professores às turmas | — | ✅ |
 
-Ao criar um professor via `POST /users`:
+As permissões são validadas no backend. A interface do frontend não é responsável pela segurança das regras de acesso.
 
-- somente um `COORDENADOR` autenticado pode criar o usuário;
-- a escola é obtida de `req.user.escolaId`;
-- a role é definida no backend como `PROFESSOR`;
-- o CPF é normalizado para 11 números e utilizado como senha inicial;
-- o campo `password` recebe somente o hash Bcrypt da senha inicial.
+## Tecnologias
 
-Não existe fluxo obrigatório de primeiro acesso, senha temporária aleatória ou tela autenticada de alteração de senha.
+- **Node.js**
+- **TypeScript**
+- **Express 5**
+- **PostgreSQL**
+- **Prisma ORM 6**
+- **Zod**
+- **JWT**
+- **Bcrypt**
+- **Multer**
+- **Cloudflare R2**
+- **AWS SDK / S3 API**
+- **Resend**
 
-## Tentativas incorretas de login
+## Segurança
 
-O backend acompanha falhas por combinação de e-mail normalizado e IP.
+A API possui algumas decisões voltadas para segurança e controle de acesso:
 
-- 1ª senha incorreta: restam 2 tentativas;
-- 2ª senha incorreta: resta 1 tentativa;
-- 3ª senha incorreta: bloqueio temporário de 5 minutos;
-- login correto limpa as falhas acumuladas;
-- durante o bloqueio a API responde HTTP `429` com `Retry-After`;
-- a mensagem orienta o usuário a utilizar **Esqueceu sua senha?** quando necessário.
+- senhas armazenadas somente como hash Bcrypt;
+- autenticação stateless com JWT;
+- invalidação de sessões antigas por `tokenVersion` após redefinição de senha;
+- recuperação de senha utilizando tokens de uso único e com expiração;
+- resposta genérica na solicitação de recuperação para evitar enumeração de usuários;
+- bloqueio temporário após tentativas incorretas de autenticação;
+- validação de permissões por role;
+- validação da escola e da turma antes do upload de uma prova;
+- arquivos armazenados em bucket privado;
+- acesso aos arquivos por URLs assinadas de curta duração;
+- validação das variáveis de ambiente com Zod.
 
-O controle atual fica em memória. Caso a API passe a executar em múltiplas instâncias, a evolução recomendada é usar Redis ou serviço equivalente.
+## Arquitetura
 
-## Recuperação de senha por e-mail
+O backend segue uma separação de responsabilidades baseada em:
 
-### Solicitar recuperação
-
-`POST /auth/forgot-password` recebe o e-mail e sempre retorna a mesma resposta com status `202`, exista ou não uma conta.
-
-Para uma conta existente:
-
-1. a API gera um token aleatório com `node:crypto`;
-2. somente o hash SHA-256 do token é armazenado no banco;
-3. o token real aparece apenas no link enviado ao usuário;
-4. o token expira em 30 minutos;
-5. uma nova solicitação invalida tokens anteriores ainda não utilizados.
-
-### Redefinir a senha
-
-`POST /auth/reset-password` recebe `token` e `newPassword`.
-
-A nova senha deve:
-
-- ter entre 6 e 8 caracteres;
-- conter somente letras (`A-Z`, `a-z`) e números (`0-9`);
-- ser diferente da senha atual.
-
-A API valida o token e atualiza o usuário dentro de uma transação Prisma. Ao concluir:
-
-- a nova senha é armazenada somente como hash Bcrypt;
-- `passwordChangedAt` é atualizado;
-- `tokenVersion` é incrementado para invalidar sessões antigas;
-- tokens de recuperação pendentes são invalidados;
-- o token utilizado não pode ser reutilizado;
-- o bloqueio de login daquele e-mail/IP é limpo;
-- o usuário deve fazer login novamente.
-
-O custo Bcrypt é configurável por `BCRYPT_SALT_ROUNDS`, com mínimo 10 e padrão 12.
-
-## Envio de e-mail com Gmail API
-
-A recuperação de senha utiliza uma conta Gmail dedicada por meio da Gmail API e OAuth 2.0.
-
-Não é utilizado SMTP porque os Droplets da DigitalOcean bloqueiam as portas SMTP de saída. A Gmail API funciona por HTTPS e utiliza apenas o escopo necessário para envio de mensagens (`gmail.send`).
-
-Em produção configure:
-
-```env
-GMAIL_USER=
-GMAIL_CLIENT_ID=
-GMAIL_CLIENT_SECRET=
-GMAIL_REFRESH_TOKEN=
+```text
+src/
+├── configs/
+├── controllers/
+├── database/
+├── middlewares/
+├── routes/
+├── services/
+├── tests/
+├── types/
+└── utils/
 ```
 
-O backend usa o refresh token para obter um access token no endpoint OAuth do Google e envia a mensagem por `users.messages.send`.
+Os controllers concentram o fluxo das requisições HTTP, middlewares cuidam de autenticação e autorização e services encapsulam responsabilidades como envio de e-mails, autenticação e armazenamento de arquivos.
 
-Em desenvolvimento/teste, se as credenciais do Gmail não estiverem configuradas, o link de recuperação é mostrado apenas no console local.
+## Principais endpoints
 
-Nunca registre JWTs, senhas, hashes, CPF, client secret ou refresh token em logs de produção.
+| Método | Endpoint | Descrição |
+| --- | --- | --- |
+| `POST` | `/sessions` | Login |
+| `POST` | `/auth/forgot-password` | Solicitar recuperação de senha |
+| `POST` | `/auth/reset-password` | Redefinir senha |
+| `GET` | `/users/professores` | Listar professores |
+| `POST` | `/users` | Cadastrar professor |
+| `PUT` | `/users/:id` | Atualizar professor |
+| `PATCH` | `/users/:id/status` | Ativar ou desativar usuário |
+| `GET` | `/turmas` | Listar turmas disponíveis |
+| `POST` | `/turmas` | Criar turma |
+| `PUT` | `/turmas/:id` | Atualizar turma |
+| `POST` | `/turmas/:turmaId/professores` | Vincular professor à turma |
+| `GET` | `/provas` | Listar provas |
+| `GET` | `/provas/:id` | Consultar prova |
+| `POST` | `/provas` | Enviar nova prova |
+| `PATCH` | `/provas/:id/status` | Alterar status da prova |
+| `DELETE` | `/provas/:id` | Excluir prova |
 
-## Autorização no upload de provas
+## Executando localmente
 
-`POST /provas` é exclusivo de `PROFESSOR` e, antes de enviar o arquivo para o storage, o backend valida que:
+### Pré-requisitos
 
-- a turma existe;
-- a turma pertence à mesma escola indicada no JWT (`escolaId`);
-- o professor autenticado está vinculado àquela turma.
+- Node.js
+- npm
+- PostgreSQL
 
-Se qualquer uma dessas condições falhar, a API responde `403` e o upload não é executado.
+### Instalação
 
-## Variáveis de ambiente
+```bash
+git clone https://github.com/HnriqueRibeiro/Sistema-Provas.git
+cd Sistema-Provas
+npm install
+```
 
-Consulte `.env.example`.
+Crie o arquivo `.env` usando `.env.example` como referência e configure suas credenciais.
 
 ```env
+NODE_ENV=development
+PORT=3000
 DATABASE_URL=
 DIRECT_URL=
 JWT_SECRET=
 FRONTEND_URL=http://localhost:3333
 BCRYPT_SALT_ROUNDS=12
 
-GMAIL_USER=
-GMAIL_CLIENT_ID=
-GMAIL_CLIENT_SECRET=
-GMAIL_REFRESH_TOKEN=
+RESEND_API_KEY=
+RESEND_FROM_EMAIL=
+RESEND_FROM_NAME=Provas Gestão Escolar
 
-SUPABASE_URL=
-SUPABASE_ANON_KEY=
+R2_ACCOUNT_ID=
+R2_ACCESS_KEY_ID=
+R2_SECRET_ACCESS_KEY=
+R2_BUCKET_NAME=
 ```
 
-As variáveis do Supabase ainda existem porque o storage atual será migrado para DigitalOcean Spaces antes da produção.
-
-## Migrations de autenticação
-
-A migration `20261022210000_auth_password_recovery` criou `PasswordResetToken`, `tokenVersion`, `passwordChangedAt` e campos usados pelo fluxo antigo de senha temporária.
-
-A migration `20261022223000_simplify_auth_flow` remove somente:
-
-- `must_change_password`;
-- `temporary_password_expires_at`.
-
-Ela preserva usuários, escolas, turmas, provas, senhas atuais, tokens de recuperação, `token_version` e `password_changed_at`.
-
-Não use `prisma migrate reset` ou `prisma db push` para substituir o fluxo versionado de migrations.
-
-## Validação local
+Depois, prepare o Prisma e execute a aplicação:
 
 ```bash
-npm install
 npx prisma generate
-npm test
-npm run typecheck
-npm run build
+npx prisma migrate dev
 npm run dev
 ```
 
-Em produção, use migrations versionadas com:
+A API será iniciada por padrão em:
+
+```text
+http://localhost:3000
+```
+
+## Scripts
+
+```bash
+npm run dev        # ambiente de desenvolvimento
+npm run build      # gera a build TypeScript
+npm start          # executa a build
+npm run typecheck  # valida os tipos
+npm test           # executa os testes automatizados
+```
+
+Em produção, as migrations devem ser aplicadas com:
 
 ```bash
 npx prisma migrate deploy
 ```
 
-## Rotas de autenticação
+## Frontend
 
-```text
-POST /sessions
-POST /auth/forgot-password
-POST /auth/reset-password
-```
+A interface web do sistema está em um repositório separado:
 
-Não existe rota de primeiro acesso, troca de senha autenticada ou reset administrativo de acesso.
+**[HnriqueRibeiro/provas-frontend](https://github.com/HnriqueRibeiro/provas-frontend)**
 
-## Checklist antes do deploy
+O frontend foi desenvolvido com React, TypeScript e Vite e consome exclusivamente esta API.
 
-- professor novo entra usando CPF sem pontuação como senha inicial;
-- `password` contém hash Bcrypt;
-- bloqueio ocorre na terceira senha incorreta;
-- **Esqueceu sua senha?** não revela se o e-mail existe;
-- Gmail API envia o link real para o usuário;
-- token expirado, utilizado ou aleatório é recusado;
-- nova senha aceita somente 6 a 8 caracteres alfanuméricos;
-- JWT antigo deixa de ser válido após redefinição;
-- professor não consegue enviar prova para turma de outra escola;
-- professor não consegue enviar prova para turma à qual não está vinculado;
-- respostas da API nunca incluem hash da senha.
+## Status do projeto
 
-## Próximas etapas para produção
+O sistema foi desenvolvido para atender uma necessidade real de um colégio municipal e segue em evolução conforme o fluxo de uso da instituição.
 
-- migrar storage do Supabase para DigitalOcean Spaces privado;
-- restringir CORS ao domínio do frontend;
-- ajustar Dockerfile de produção;
-- configurar Nginx, HTTPS e firewall;
-- configurar PostgreSQL Managed Database;
-- configurar Gmail API/OAuth em produção;
-- executar teste completo de upload, download e recuperação de senha.
+Entre os pontos trabalhados no projeto estão autenticação, autorização por perfil, armazenamento de arquivos em nuvem, recuperação segura de senha, regras de negócio escolares e integração entre frontend e backend.
+
+---
+
+Desenvolvido por **Henrique Ribeiro**  
+[GitHub](https://github.com/HnriqueRibeiro)
